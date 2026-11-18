@@ -1,6 +1,6 @@
 # ❄ Yuki
 
-De la neige sur le bureau KDE Plasma 6, en Wayland comme en X11, et sur macOS (voir [macOS](#macos)).
+De la neige sur le bureau KDE Plasma 6, en Wayland comme en X11, sur macOS (voir [macOS](#macos)) et sur Windows (voir [Windows](#windows)).
 
 - Les flocons tombent par-dessus tout, et les clics passent au travers.
 - La neige s'accumule sur le haut des fenêtres et sur la barre des tâches. Elle suit le panneau flottant ou collé.
@@ -57,7 +57,7 @@ Tes réglages se trouvent dans la variable `YUKI_ARGS`, au début de `yuki-sync.
 | `--elves-every` | `6` | Bonhomme de neige toutes les N minutes (`0` = jamais) |
 | `--santa-every` | `12` | Père Noël toutes les N minutes (`0` = jamais) |
 | `--panel-gap` | `8` | KDE : écart du panneau flottant en px (`0` si le panneau ne flotte pas) |
-| `--on-battery` | — | macOS : continue à neiger sur batterie |
+| `--on-battery` | — | macOS et Windows : continue à neiger sur batterie |
 | `--no-tray` | — | Pas d'icône ❄ |
 | `--debug` | — | Affiche les fenêtres sur lesquelles la neige peut tenir |
 
@@ -65,7 +65,7 @@ Tes réglages se trouvent dans la variable `YUKI_ARGS`, au début de `yuki-sync.
 
 Le sous-menu **Réglages** change la neige, le vent, l'accumulation, la fonte, l'opacité des flocons, la fréquence des passages et les images par seconde, sans relancer Yuki.
 
-Ces choix sont conservés au redémarrage et **ont priorité sur les options de lancement**, y compris `YUKI_ARGS`. L'entrée « Revenir aux réglages de lancement » les efface. Sur macOS, la case « Neiger sur batterie » remplace `--on-battery` de la même façon. `--panel-gap` reste une option de lancement.
+Ces choix sont conservés au redémarrage et **ont priorité sur les options de lancement**, y compris `YUKI_ARGS`. L'entrée « Revenir aux réglages de lancement » les efface. Sur macOS et Windows, la case « Neiger sur batterie » remplace `--on-battery` de la même façon. `--panel-gap` reste une option de lancement.
 
 ### Déclencher depuis un terminal ou un raccourci
 
@@ -94,6 +94,14 @@ git clone <ce dépôt> ~/src/yuki
 ~/src/yuki/install-macos.sh
 ```
 
+Sans les Command Line Tools d'Apple, `git` et `python3` ne sont que des coquilles vides qui ouvrent une fenêtre d'installation, et celle-ci peut échouer (« pas disponible actuellement depuis le serveur de mise à jour »). Yuki n'en a pas besoin : installe Python depuis [python.org](https://www.python.org/downloads/macos/), puis, dans un nouveau terminal :
+
+```bash
+mkdir -p ~/src/yuki
+curl -fsSL https://github.com/Roaanf/yuki/archive/refs/heads/main.tar.gz | tar xz -C ~/src/yuki --strip-components=1
+~/src/yuki/install-macos.sh
+```
+
 Le script crée un environnement Python dans `~/Library/Application Support/Yuki/venv`, y installe PyQt6 et pyobjc, puis ajoute un LaunchAgent qui lance Yuki à la connexion. Aucune autorisation système n'est demandée.
 
 - La neige tient sur les fenêtres et sur le Dock, s'il est en bas de l'écran et visible. Sinon, le chasse-neige roule sur le bas de l'écran.
@@ -116,9 +124,30 @@ defaults delete com.yuki.yuki 2>/dev/null
 
 PyQt6 et pyobjc étaient installés uniquement dans cet environnement : rien d'autre ne reste sur le système. Tu peux ensuite supprimer le dossier du dépôt.
 
+## Windows
+
+Le port Windows n'a pas encore été essayé sur un vrai PC : sa logique est testée avec des données simulées. Il faut Windows 10 ou 11 en 64 bits et Python 3 depuis [python.org](https://www.python.org/downloads/windows/).
+
+Depuis le dossier du dépôt, dans PowerShell :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+```
+
+Le script crée un environnement Python dans `%LOCALAPPDATA%\Yuki\venv`, y installe PyQt6, lance Yuki et l'ajoute au démarrage de la session. Il ne demande pas de droits administrateur.
+
+- La neige tient sur les fenêtres et sur la barre des tâches, si elle est en bas de l'écran et visible.
+- Les écrans avec des échelles différentes (100 %, 125 %, 150 %…) sont pris en charge.
+- Sur batterie, l'overlay est retiré et Yuki se met en pause. Pour continuer, coche « Neiger sur batterie » dans ⚙ Réglages. La neige consomme beaucoup : un portable peut y perdre une bonne part de son autonomie.
+- Il est aussi retiré au-dessus d'une app ou d'un jeu en plein écran.
+- Sur Windows 11, l'icône ❄ peut être rangée dans les icônes masquées, derrière la flèche de la barre des tâches.
+- Pour changer les réglages de lancement : `$env:YUKI_ARGS="--density 0.5"`, puis relance l'installation.
+- Pour relancer : ajoute `-Restart` à la commande d'installation. Le journal est dans `%LOCALAPPDATA%\Yuki\yuki.log`.
+- Pour désinstaller : ajoute `-Uninstall`. Le script arrête Yuki et supprime le démarrage automatique, l'environnement Python, le journal et les réglages du menu.
+
 ## Comment ça marche
 
-Le code est dans `yuki/` : `core.py` (simulation et dessin), `view.py` (overlay), `tray.py` (icône), `app.py` (boucle commune) et `backends/` (`kde.py`, `macos.py`). Chaque backend fournit la liste des fenêtres à `Sim.apply()`.
+Le code est dans `yuki/` : `core.py` (simulation et dessin), `view.py` (overlay), `tray.py` (icône), `app.py` (boucle commune) et `backends/` (`kde.py`, `macos.py`, `windows.py`). Chaque backend fournit la liste des fenêtres à `Sim.apply()`.
 
 Sur KDE :
 

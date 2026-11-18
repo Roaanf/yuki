@@ -18,6 +18,9 @@ def load_backend():
     if sys.platform == "darwin":
         from .backends.macos import MacBackend
         return MacBackend
+    if sys.platform == "win32":
+        from .backends.windows import WindowsBackend
+        return WindowsBackend
     from .backends.kde import KdeBackend
     return KdeBackend
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Yuki — neige sur le bureau pour KDE Plasma 6 (Wayland ou X11) et macOS.
+Yuki — neige sur le bureau pour KDE Plasma 6 (Wayland ou X11), macOS et Windows.
 
 - Les flocons tombent par-dessus tout, les clics passent au travers.
-- La neige s'accumule sur le haut des fenêtres, des panneaux et du Dock.
+- La neige s'accumule sur le haut des fenêtres, des panneaux, du Dock et de la barre des tâches.
 - Déplace une fenêtre d'un coup sec : la neige glisse et tombe.
 - Ferme ou réduis une fenêtre : sa neige tombe (ou reste au chaud si réduite).
 

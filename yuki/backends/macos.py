@@ -9,10 +9,11 @@ import os
 import sys
 import time
 
-from PyQt6.QtCore import QLockFile, QProcess, QRect, QStandardPaths, QTimer
+from PyQt6.QtCore import QProcess, QRect, QTimer
 
 from ..core import WindowFeed
 from ..view import SnowView
+from .common import BatteryPauseMixin, acquire_instance_lock
 
 POLL_IDLE_MS = 33
 POLL_MOVING_MS = 16       # une fenêtre bouge : la neige doit suivre de près
@@ -20,7 +21,6 @@ POLL_PAUSED_MS = 1000
 MOVING_HOLD = 0.4         # s à garder le rythme rapide après le dernier mouvement
 ALIVE_EVERY = 2.0         # s entre deux relectures de la liste complète (coûteuse)
 SCREENS_EVERY = 1.0
-POWER_EVERY_MS = 30000
 
 MIN_WINDOW = 50
 RECT_TOLERANCE = 2
@@ -124,9 +124,8 @@ def parse_on_battery(pmset_output):
     return None
 
 
-class MacBackend:
+class MacBackend(BatteryPauseMixin):
     DESCRIPTION = "Neige kawaii sur macOS ❄"
-    HAS_BATTERY_OPTION = True
 
     @staticmethod
     def add_arguments(ap):
@@ -152,12 +151,7 @@ class MacBackend:
         self.pid = os.getpid()
         self.sim = self.feed = self.set_paused = None
 
-        # Sur macOS, rien ne joue le rôle du nom D-Bus : un verrou évite deux neiges.
-        tmp = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.TempLocation)
-        self.lock = QLockFile(os.path.join(tmp, "org.roland.yuki.lock"))
-        self.lock.setStaleLockTime(0)
-        if not self.lock.tryLock(0):
-            sys.exit("yuki: déjà lancé ?")
+        self.lock = acquire_instance_lock()
 
         AppKit.NSApplication.sharedApplication().setActivationPolicy_(
             AppKit.NSApplicationActivationPolicyAccessory)
@@ -174,14 +168,9 @@ class MacBackend:
         self.poll_timer = QTimer()
         self.poll_timer.timeout.connect(self.poll)
 
-        self.run_on_battery = args.on_battery
-        self.on_battery = None
-        self.paused_by_power = False
+        self._init_power(args)
         self.power_proc = QProcess()
         self.power_proc.finished.connect(self._power_read)
-        self.power_timer = QTimer()
-        self.power_timer.setInterval(POWER_EVERY_MS)
-        self.power_timer.timeout.connect(self._power_check)
 
     def screen_rects(self):
         return [s.geometry() for s in self.app.screens()]
@@ -294,40 +283,12 @@ class MacBackend:
         out = bytes(self.power_proc.readAllStandardOutput()).decode("utf-8", "replace")
         self.power_changed(parse_on_battery(out))
 
-    def power_changed(self, on_battery):
-        if self.run_on_battery or on_battery is None or on_battery == self.on_battery:
-            return               # un pmset encore en cours peut répondre après le changement
-        self.on_battery = on_battery
-        if on_battery:           # une pause choisie à la main reste à la main
-            self.paused_by_power = not self.sim.user_paused
-            if self.paused_by_power:
-                self.set_paused(True)
-        elif self.paused_by_power:
-            self.paused_by_power = False
-            self.set_paused(False)
-
-    def set_run_on_battery(self, run):
-        if run == self.run_on_battery:
-            return
-        self.run_on_battery = run
-        self.on_battery = None   # à relire : l'état a pu changer sans qu'on le suive
-        if run:
-            self.power_timer.stop()
-            if self.paused_by_power:
-                self.paused_by_power = False
-                self.set_paused(False)
-        else:
-            self._power_check()
-            self.power_timer.start()
-
     # ---- cycle de vie --------------------------------------------------
     def start(self, sim, set_paused):
         self.set_paused = set_paused
         self.poll()
         self.poll_timer.start(POLL_IDLE_MS)
-        if not self.run_on_battery:
-            self._power_check()
-            self.power_timer.start()
+        self._start_power()
 
     def stop(self):
         self.poll_timer.stop()

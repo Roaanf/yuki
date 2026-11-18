@@ -15,8 +15,12 @@ if [ "$(uname)" != "Darwin" ]; then
     echo "Ce script est réservé à macOS (sur Linux : ./install.sh)."
     exit 1
 fi
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "python3 manque : xcode-select --install, ou brew install python"
+# Sans Command Line Tools, /usr/bin/python3 n'est qu'un stub qui ouvre la fenêtre d'installation.
+PY3="$(command -v python3 || true)"
+DEV="$(xcode-select -p 2>/dev/null || true)"
+if [ -z "$PY3" ] || { [ "$PY3" = /usr/bin/python3 ] && [ ! -x "${DEV:-/nonexistent}/usr/bin/python3" ]; }; then
+    echo "python3 manque : installe-le depuis https://www.python.org/downloads/macos/"
+    echo "puis relance ce script dans un nouveau terminal."
     exit 1
 fi
 
