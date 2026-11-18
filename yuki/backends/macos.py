@@ -68,7 +68,10 @@ def holds_snow(info, own_pid):
 
 
 def dock_rect(screen, onscreen):
-    """Partie visible du Dock en bas de cet écran, ou None (masqué, à gauche, à droite)."""
+    """Partie visible du Dock en bas de cet écran, ou None (masqué, sur le côté, largeur inconnue).
+
+    Sans largeur mesurée, pas de surface : la neige flotterait de chaque côté du Dock.
+    """
     fx, fy, fw, fh = screen.frame
     vx, vy, vw, vh = screen.visible
     bottom = fy + fh
@@ -76,17 +79,16 @@ def dock_rect(screen, onscreen):
     if inset <= DOCK_MIN_INSET:
         return None
     top = bottom - inset
-    x, w = fx, fw               # à défaut de mieux : toute la largeur
-    best = 0
+    best = None
     for info in onscreen:
         if str(info.get(K_OWNER, "")) != "Dock" or int(info.get(K_LAYER, -1)) != DOCK_LAYER:
             continue
         r = window_rect(info)
         if r is None or not (100 <= r[2] < fw) or r[0] < fx or r[0] + r[2] > fx + fw:
             continue
-        if r[1] < bottom and r[1] + r[3] > top and r[2] > best:
-            x, w, best = r[0], r[2], r[2]
-    return (x, top, w, inset)
+        if r[1] < bottom and r[1] + r[3] > top and (best is None or r[2] > best[2]):
+            best = r
+    return None if best is None else (best[0], top, best[2], inset)
 
 
 def build_payload(onscreen, known_ids, screens, own_pid, debug=False):

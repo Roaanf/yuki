@@ -37,18 +37,21 @@ def win(num, x=100, y=100, w=400, h=300, layer=0, alpha=1.0, pid=7, owner="App",
     return info
 
 
+DOCK = win(50, 400, 825, 640, 75, layer=20, owner="Dock")
+
+
 class Payload(unittest.TestCase):
     def ids(self, payload):
         return [it[0] for it in payload["w"]]
 
     def test_order_is_reversed_and_dock_is_on_top(self):
-        p = build_payload([win(1), win(2)], [1, 2], [MAIN], PID)
+        p = build_payload([win(1), win(2), DOCK], [1, 2], [MAIN], PID)
         self.assertEqual(self.ids(p), ["2", "1", "dock:1"])
 
     def test_filters(self):
         rejected = [win(1, layer=25), win(2, alpha=0), win(3, w=49), win(4, h=49),
                     win(5, pid=PID), win(6, owner="Window Server")]
-        p = build_payload(rejected + [win(7)], [], [MAIN], PID)
+        p = build_payload(rejected + [win(7), DOCK], [], [MAIN], PID)
         self.assertEqual(self.ids(p), ["7", "dock:1"])
 
     def test_item_format(self):
@@ -73,16 +76,15 @@ class Payload(unittest.TestCase):
 
 
 class Dock(unittest.TestCase):
-    def test_full_width_by_default(self):
-        self.assertEqual(dock_rect(MAIN, []), (0, 830, 1440, 70))
+    def test_no_surface_when_width_is_unknown(self):
+        self.assertIsNone(dock_rect(MAIN, []))
 
     def test_uses_dock_window_width(self):
-        d = win(50, 400, 825, 640, 75, layer=20, owner="Dock")
-        self.assertEqual(dock_rect(MAIN, [d]), (400, 830, 640, 70))
+        self.assertEqual(dock_rect(MAIN, [DOCK]), (400, 830, 640, 70))
 
-    def test_ignores_full_screen_dock_window(self):
+    def test_full_screen_dock_window_says_nothing_about_width(self):
         d = win(50, 0, 0, 1440, 900, layer=20, owner="Dock")
-        self.assertEqual(dock_rect(MAIN, [d]), (0, 830, 1440, 70))
+        self.assertIsNone(dock_rect(MAIN, [d]))
 
     def test_hidden_dock_small_inset(self):
         self.assertIsNone(dock_rect(ScreenInfo(1, (0, 0, 1440, 900), (0, 25, 1440, 871)), []))
@@ -92,7 +94,8 @@ class Dock(unittest.TestCase):
 
     def test_screen_above_primary(self):
         s = ScreenInfo(2, (0, -1080, 1920, 1080), (0, -1055, 1920, 985))
-        self.assertEqual(dock_rect(s, []), (0, -70, 1920, 70))
+        d = win(50, 400, -75, 640, 75, layer=20, owner="Dock")
+        self.assertEqual(dock_rect(s, [d]), (400, -70, 640, 70))
 
 
 class Helpers(unittest.TestCase):
@@ -230,8 +233,8 @@ class Backend(unittest.TestCase):
             self.make_backend()
 
     def test_minimized_sleeps_and_closed_falls(self):
-        self.cocoa.onscreen = [win(1), win(2, 600)]
-        self.cocoa.all = [win(1), win(2, 600)]
+        self.cocoa.onscreen = [win(1), win(2, 600), DOCK]
+        self.cocoa.all = [win(1), win(2, 600), DOCK]
         self.backend.poll()
         self.assertIn("dock:1", self.sim.surfaces)
         self.snow_on("1")

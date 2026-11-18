@@ -87,7 +87,7 @@ Ajoute cette ligne à la fin des scripts que tu lances au branchement et au déb
 
 ## macOS
 
-Le port macOS n'a pas encore été essayé sur un vrai Mac : sa logique est testée avec des données simulées.
+Le port macOS a tourné sur un seul vrai Mac pour l'instant : le reste de sa logique est testé avec des données simulées.
 
 ```bash
 git clone <ce dépôt> ~/src/yuki
@@ -104,7 +104,7 @@ curl -fsSL https://github.com/Roaanf/yuki/archive/refs/heads/main.tar.gz | tar x
 
 Le script crée un environnement Python dans `~/Library/Application Support/Yuki/venv`, y installe PyQt6 et pyobjc, puis ajoute un LaunchAgent qui lance Yuki à la connexion. Aucune autorisation système n'est demandée.
 
-- La neige tient sur les fenêtres et sur le Dock, s'il est en bas de l'écran et visible. Sinon, le chasse-neige roule sur le bas de l'écran.
+- La neige tient sur les fenêtres et sur le Dock, s'il est en bas de l'écran, visible et si sa largeur peut être mesurée. Sinon, elle tombe jusqu'au bas de l'écran, où roule le chasse-neige.
 - Yuki se met en pause sur batterie et reprend sur secteur. Pour continuer sur batterie, coche « Neiger sur batterie » dans ⚙ Réglages.
 - Rien ne s'affiche sur les apps en plein écran.
 - Pour changer les réglages : `YUKI_ARGS="--density 0.5" ~/src/yuki/install-macos.sh`.
