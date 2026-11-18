@@ -3,6 +3,7 @@
 # Les fichiers de ~/.local/bin sont des liens vers ce dépôt : un `git pull` suffit pour mettre à jour.
 set -e
 cd "$(dirname "$0")"
+[ "$(uname)" = "Darwin" ] && exec ./install-macos.sh
 REPO="$PWD"
 BIN="$HOME/.local/bin"
 AUTOSTART="$HOME/.config/autostart"
