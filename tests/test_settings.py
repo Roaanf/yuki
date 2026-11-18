@@ -20,7 +20,8 @@ from yuki.tray import add_settings_menu  # noqa: E402
 
 def launch_args(**over):
     values = dict(density=1.0, wind=15.0, pile=1.0, melt=0.003, fps=30, over_max=0.0,
-                  over_windows=1.0, plow_every=10.0, elves_every=6.0, santa_every=12.0)
+                  over_windows=1.0, plow_every=10.0, elves_every=6.0, santa_every=12.0,
+                  fight_every=8.0, cat_every=9.0, cursor=1.0, season=0.0)
     values.update(over)
     return argparse.Namespace(**values)
 

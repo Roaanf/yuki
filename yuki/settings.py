@@ -28,13 +28,22 @@ PARAMS = (
           (("Jamais", 0.0), ("3 min", 3.0), ("6 min", 6.0), ("15 min", 15.0), ("30 min", 30.0))),
     Param("santa_every", "🎅  Passage du père Noël", 0.0, None,
           (("Jamais", 0.0), ("5 min", 5.0), ("12 min", 12.0), ("30 min", 30.0), ("1 h", 60.0))),
+    Param("fight_every", "⚔  Bataille de boules de neige", 0.0, None,
+          (("Jamais", 0.0), ("4 min", 4.0), ("8 min", 8.0), ("15 min", 15.0), ("30 min", 30.0))),
+    Param("cat_every", "🐱  Visite de Neko-chan", 0.0, None,
+          (("Jamais", 0.0), ("5 min", 5.0), ("9 min", 9.0), ("20 min", 20.0), ("45 min", 45.0))),
+    Param("cursor", "🖱  Souffle du curseur", 0.0, None,
+          (("Aucun", 0.0), ("Doux", 0.5), ("Normal", 1.0), ("Fort", 2.0))),
+    Param("season", "🌸  Saison", 0.0, 3.0,
+          (("Selon la date", 0.0), ("Hiver", 1.0), ("Printemps", 2.0), ("Automne", 3.0))),
     Param("fps", "🎞  Images par seconde", 1.0, None,
           (("15", 15.0), ("30", 30.0), ("60", 60.0), ("120", 120.0))),
 )
 BY_KEY = {p.key: p for p in PARAMS}
 SIM_ATTRS = {"wind": "wind", "pile": "pile", "melt": "melt", "over_windows": "over_win",
              "over_max": "over_max", "plow_every": "plow_every",
-             "elves_every": "elves_every", "santa_every": "santa_every"}
+             "elves_every": "elves_every", "santa_every": "santa_every",
+             "fight_every": "fight_every", "cat_every": "cat_every", "cursor": "cursor_force"}
 
 
 def same_value(a, b):
@@ -49,7 +58,7 @@ def clean(param, value):
         value = max(param.low, value)
     if param.high is not None:
         value = min(param.high, value)
-    return float(round(value)) if param.key == "fps" else value
+    return float(round(value)) if param.key in ("fps", "season") else value
 
 
 class Settings:
@@ -96,6 +105,8 @@ class Settings:
             return
         if key == "density":
             self.sim.set_density(self.values[key])
+        elif key == "season":
+            self.sim.set_season(self.values[key])
         elif key in SIM_ATTRS:
             setattr(self.sim, SIM_ATTRS[key], self.values[key])
 

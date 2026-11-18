@@ -7,10 +7,16 @@ De la neige sur le bureau KDE Plasma 6, en Wayland comme en X11, sur macOS (voir
 - Si on secoue une fenêtre, la neige glisse et tombe. Si on ferme la fenêtre, tout dégringole. Si on la réduit, sa neige est gardée de côté.
 - 🚜 Un chasse-neige passe de temps en temps sur la barre des tâches, un par écran.
 - ⛄ Des lutins construisent des bonshommes de neige.
-- 🎅 Le père Noël passe en traîneau.
+- 🎅 Le père Noël passe en traîneau et lâche des cadeaux en parachute. Ils se posent sur les fenêtres, tombent si on les secoue et s'ouvrent au passage du chasse-neige.
+- ⚔️ Des lutins se battent à coups de boules de neige d'une fenêtre à l'autre. Une boule peut décapiter un bonhomme ou s'écraser sur une fenêtre et y glisser.
+- 🖱️ Le curseur écarte les flocons, et balaie la neige s'il passe vite dessus.
+- 🧊 Des glaçons poussent sous les fenêtres enneigées et tombent quand on les secoue.
+- 🐱 Neko-chan se promène en laissant des empreintes, puis dort sur un tas de neige. Si on bouge sa fenêtre, il saute et s'en va.
+- 🌸 Yuki suit les saisons : sakura de mars à mai, feuilles en septembre et octobre, neige le reste de l'année. Les visiteurs d'hiver ne viennent d'eux-mêmes qu'avec la neige.
+- 🎆 Le père Noël passe quatre fois plus souvent les 24 et 25 décembre. Il y a des feux d'artifice le 31 au soir, et un bouquet final de minuit à 0 h 20.
 - Les lutins, les bonshommes et le père Noël restent derrière les fenêtres maximisées. Les flocons y sont masqués ou rendus transparents, au choix.
 - Rien n'est affiché au-dessus des apps en plein écran.
-- Une icône ❄ dans la zone de notification donne accès au chasse-neige, au bonhomme, au père Noël, à la pause et à Quitter.
+- Une icône ❄ dans la zone de notification donne accès au chasse-neige, au bonhomme, au père Noël, à la bataille, à Neko-chan, au feu d'artifice, à la pause et à Quitter.
 - Le rendu est partiel : seules les zones qui bougent sont redessinées, environ 10 % de l'écran.
 
 ## Installation
@@ -56,6 +62,10 @@ Tes réglages se trouvent dans la variable `YUKI_ARGS`, au début de `yuki-sync.
 | `--plow-every` | `10` | Chasse-neige toutes les N minutes (`0` = jamais) |
 | `--elves-every` | `6` | Bonhomme de neige toutes les N minutes (`0` = jamais) |
 | `--santa-every` | `12` | Père Noël toutes les N minutes (`0` = jamais) |
+| `--fight-every` | `8` | Bataille de boules de neige toutes les N minutes (`0` = jamais) |
+| `--cat-every` | `9` | Visite de Neko-chan toutes les N minutes (`0` = jamais) |
+| `--cursor` | `1.0` | Force du souffle du curseur (`0` = aucun) |
+| `--season` | `auto` | `auto`, `hiver`, `printemps` ou `automne` |
 | `--panel-gap` | `8` | KDE : écart du panneau flottant en px (`0` si le panneau ne flotte pas) |
 | `--on-battery` | — | macOS et Windows : continue à neiger sur batterie |
 | `--no-tray` | — | Pas d'icône ❄ |
@@ -63,7 +73,7 @@ Tes réglages se trouvent dans la variable `YUKI_ARGS`, au début de `yuki-sync.
 
 ### Réglages depuis le menu ❄
 
-Le sous-menu **Réglages** change la neige, le vent, l'accumulation, la fonte, l'opacité des flocons, la fréquence des passages et les images par seconde, sans relancer Yuki.
+Le sous-menu **Réglages** change la neige, le vent, l'accumulation, la fonte, l'opacité des flocons, la fréquence des passages, le souffle du curseur, la saison et les images par seconde, sans relancer Yuki.
 
 Ces choix sont conservés au redémarrage et **ont priorité sur les options de lancement**, y compris `YUKI_ARGS`. L'entrée « Revenir aux réglages de lancement » les efface. Sur macOS et Windows, la case « Neiger sur batterie » remplace `--on-battery` de la même façon. `--panel-gap` reste une option de lancement.
 
@@ -73,6 +83,9 @@ Ces choix sont conservés au redémarrage et **ont priorité sur les options de 
 busctl --user call org.roland.Yuki /Yuki org.roland.Yuki plow      # chasse-neige
 busctl --user call org.roland.Yuki /Yuki org.roland.Yuki snowman   # bonhomme
 busctl --user call org.roland.Yuki /Yuki org.roland.Yuki santa     # père Noël
+busctl --user call org.roland.Yuki /Yuki org.roland.Yuki fight     # bataille
+busctl --user call org.roland.Yuki /Yuki org.roland.Yuki cat       # Neko-chan
+busctl --user call org.roland.Yuki /Yuki org.roland.Yuki fireworks # feu d'artifice
 ```
 
 ### Seulement quand le PC est branché
@@ -147,7 +160,7 @@ Le script crée un environnement Python dans `%LOCALAPPDATA%\Yuki\venv`, y insta
 
 ## Comment ça marche
 
-Le code est dans `yuki/` : `core.py` (simulation et dessin), `view.py` (overlay), `tray.py` (icône), `app.py` (boucle commune) et `backends/` (`kde.py`, `macos.py`, `windows.py`). Chaque backend fournit la liste des fenêtres à `Sim.apply()`.
+Le code est dans `yuki/` : `core.py` (simulation et dessin), `fun.py` (bataille, curseur, cadeaux, feux d'artifice, glaçons, chat, saisons), `view.py` (overlay), `tray.py` (icône), `app.py` (boucle commune) et `backends/` (`kde.py`, `macos.py`, `windows.py`). Chaque backend fournit la liste des fenêtres à `Sim.apply()`.
 
 Sur KDE :
 

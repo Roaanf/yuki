@@ -30,6 +30,7 @@ var PANEL_GAP = __GAP__;
 var DEBUG = __DEBUG__;
 var removed = {};
 var lastSent = "";
+var lastCursor = 0;
 
 function onCurrentDesktop(w) {
     if (w.onAllDesktops) return true;
@@ -128,6 +129,15 @@ function push() {
     lastSent = msg;
     callDBus("org.roland.Yuki", "/Yuki", "org.roland.Yuki", "update", msg);
 }
+// Une souris à 1000 Hz saturerait D-Bus : 30 positions par seconde suffisent.
+function pushCursor() {
+    var now = Date.now();
+    if (now - lastCursor < 33) return;
+    lastCursor = now;
+    var c = workspace.cursorPos;
+    callDBus("org.roland.Yuki", "/Yuki", "org.roland.Yuki", "cursor",
+             Math.round(c.x) + " " + Math.round(c.y));
+}
 function hook(w) {
     if (!w) return;
     manageSelf(w);
@@ -151,6 +161,7 @@ connectWs("windowActivated", push);
 connectWs("currentDesktopChanged", push);
 connectWs("currentActivityChanged", push);
 connectWs("stackingOrderChanged", push);
+connectWs("cursorPosChanged", pushCursor);
 push();
 """
 
@@ -218,6 +229,29 @@ class BusObject(QObject):
         """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki plow"""
         return self.sim.start_plow()
 
+    @pyqtSlot(result=bool)
+    def fight(self):
+        """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki fight"""
+        return self.sim.start_fight(force=True)
+
+    @pyqtSlot(result=bool)
+    def cat(self):
+        """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki cat"""
+        return self.sim.start_cat()
+
+    @pyqtSlot(result=bool)
+    def fireworks(self):
+        """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki fireworks"""
+        return self.sim.start_fireworks()
+
+    @pyqtSlot(str)
+    def cursor(self, position):
+        try:
+            x, y = position.split()
+            self.sim.set_cursor(int(x), int(y))
+        except ValueError:
+            pass
+
     @pyqtSlot(str)
     def update(self, payload):
         try:
@@ -257,6 +291,7 @@ def unload_kwin_script(bus):
 class KdeBackend:
     DESCRIPTION = "Neige kawaii sur Plasma ❄"
     HAS_BATTERY_OPTION = False   # géré par yuki-sync.sh, qui arrête le processus
+    POLL_CURSOR = False          # Wayland cache la souris : le script KWin l'envoie
 
     @staticmethod
     def add_arguments(ap):

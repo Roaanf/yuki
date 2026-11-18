@@ -22,6 +22,7 @@ class BatteryPauseMixin:
     """Pause sur batterie. La classe fournit _power_check(), qui appelle power_changed()."""
 
     HAS_BATTERY_OPTION = True
+    POLL_CURSOR = True       # Qt y connaît la position globale de la souris
 
     def _init_power(self, args):
         self.run_on_battery = args.on_battery

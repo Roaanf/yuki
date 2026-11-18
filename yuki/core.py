@@ -8,13 +8,9 @@ import time
 from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt6.QtGui import QColor, QPainterPath, QPen, QRegion
 
-COL = 4               # largeur d'une colonne de neige (px logiques)
-MAX_PILE = 14.0       # hauteur max sur une fenêtre
-MAX_GROUND = 22.0     # hauteur max au sol
-GRAVITY = 900.0
-SHED_SPEED = 220.0    # vitesse (px/s) à partir de laquelle la neige glisse
-MAX_CLUMPS = 1500
-TILE = 32             # taille des tuiles pour ne redessiner que ce qui bouge
+from .fun import AUTO, FunMixin
+from .shared import (COL, GRAVITY, ICE_MAX, MAX_CLUMPS, MAX_GROUND, MAX_PILE, SHED_SPEED, TILE,
+                     ease as _ease)
 
 
 # --------------------------------------------------------------------------
@@ -23,13 +19,16 @@ TILE = 32             # taille des tuiles pour ne redessiner que ce qui bouge
 class Surface:
     """Un bord qui retient la neige : haut d'une fenêtre, d'un panneau, ou le sol."""
     __slots__ = ("sid", "x", "y", "w", "h", "maxh", "heights", "mask", "t", "ground", "dock",
-                 "path")
+                 "path", "ice", "ice_path", "speck")
 
     def __init__(self, sid, x, y, w, h, maxh, t, ground=False):
         self.sid, self.x, self.y, self.w, self.h = sid, x, y, w, h
         self.maxh, self.t, self.ground = maxh, t, ground
         self.dock = False
         self.path = None          # contour de neige en cache (None = à recalculer)
+        self.ice = []             # glaçons [position, longueur, longueur max, demi-largeur]
+        self.ice_path = None
+        self.speck = None         # pétales ou feuilles visibles dans le tas (en cache)
         n = max(1, int(w // COL))
         self.heights = [0.0] * n
         self.mask = [True] * n
@@ -42,6 +41,8 @@ class Surface:
             self.heights = [old[min(m - 1, int(i * m / n))] for i in range(n)]
             self.mask = [True] * n
         self.w = w
+        self.ice = [i for i in self.ice if i[0] < w - 4]
+        self.ice_path = None
 
     def cap(self, i):
         n = len(self.heights)
@@ -57,11 +58,6 @@ class Surface:
 BUILD_END = 16.5        # durée d'une construction de bonhomme (s)
 MAX_SNOWMEN = 5
 SNOWMAN_LIFE = 20 * 60  # un bonhomme fond au bout de 20 min
-
-
-def _ease(t):
-    t = max(0.0, min(1.0, t))
-    return t * t * (3 - 2 * t)
 
 
 class FestiveMixin:
@@ -151,14 +147,14 @@ class FestiveMixin:
 
     def _step_festive(self, dt):
         # déclenchements automatiques
-        if self.elves_every > 0:
+        if self.elves_every > 0 and self.winter:
             self.elves_timer += dt
             if self.elves_timer >= self.elves_every * 60:
                 if not self.start_snowman():
                     self.elves_timer = self.elves_every * 60 * 0.8   # réessaie un peu plus tard
-        if self.santa_every > 0 and self.santa is None:
+        if self.santa_every > 0 and self.santa is None and self.winter:
             self.santa_timer += dt
-            if self.santa_timer >= self.santa_every * 60:
+            if self.santa_timer >= self._santa_period():
                 self.start_santa()
 
         keep = []
@@ -306,7 +302,8 @@ class FestiveMixin:
             cy = (1 - k) * -6 + k * -22.5
             ball(cx, cy, 6.3)
         # tête (8 → 9.5 s)
-        if t > 8:
+        headless = m.get("headless")
+        if t > 8 and not headless:
             k = _ease((t - 8) / 1.5)
             cx = (1 - k) * (16 * d)
             cy = (1 - k) * -5 + k * -33.3
@@ -314,14 +311,14 @@ class FestiveMixin:
         if t > 9.5:
             hy = -33.3
             dark = QColor(40, 40, 50)
-            if t > 9.8:                                   # yeux
+            if t > 9.8 and not headless:                  # yeux
                 p.setBrush(dark)
                 p.drawEllipse(QPointF(-1.7, hy - 1.0), 0.75, 0.75)
                 p.drawEllipse(QPointF(1.7, hy - 1.0), 0.75, 0.75)
                 p.setBrush(QColor(255, 150, 175, 170))    # joues
                 p.drawEllipse(QPointF(-2.9, hy + 1.0), 1.0, 0.6)
                 p.drawEllipse(QPointF(2.9, hy + 1.0), 1.0, 0.6)
-            if t > 10.2:                                  # carotte
+            if t > 10.2 and not headless:                 # carotte
                 nose = QPainterPath()
                 nose.moveTo(0, hy - 0.2)
                 nose.lineTo(4.5 * d, hy + 0.6)
@@ -345,7 +342,7 @@ class FestiveMixin:
                 p.setBrush(QColor(r, g, b))
                 p.drawRoundedRect(QRectF(-4.6, hy + 3.2, 9.2, 2.4), 1.2, 1.2)
                 p.drawRoundedRect(QRectF(1.5 * d - 1.2, hy + 4.5, 2.4, 5.0), 1.0, 1.0)
-            if t > 11.4:                                  # chapeau
+            if t > 11.4 and not headless:                 # chapeau
                 if m["hat"] == "top":
                     p.setBrush(QColor(35, 35, 45))
                     p.drawRect(QRectF(-4.8, hy - 4.6, 9.6, 1.4))
@@ -551,7 +548,7 @@ class FestiveMixin:
         p.setPen(Qt.PenStyle.NoPen)
 
 
-class Sim(FestiveMixin):
+class Sim(FestiveMixin, FunMixin):
     def __init__(self, screens, density=1.0, wind=15.0, pile=1.0, melt=0.003):
         self.screens = [QRectF(r) for r in screens]
         self.wind = wind
@@ -569,6 +566,7 @@ class Sim(FestiveMixin):
         self.plow_timer = 0.0
         self.puffs = []           # fumée du pot d'échappement [x, y, vx, vy, age, r]
         self._festive_init()
+        self._fun_init()
         self.surfaces = {}
         self.dormant = {}
         self.order = []            # du bas vers le haut
@@ -582,6 +580,7 @@ class Sim(FestiveMixin):
         self.full = True          # tout redessiner (démarrage, changement d'écran)
         self.grounds = []
         self.set_screens(screens)
+        self.set_season(AUTO)
 
     def set_screens(self, screens):
         """(Re)configure les écrans : au démarrage et quand on branche/change un écran."""
@@ -632,8 +631,9 @@ class Sim(FestiveMixin):
 
     def _touch(self, s):
         """Le tas de neige de s a changé : cache invalidé + bande à redessiner."""
-        s.path = None
-        self._add_tiles(self.tiles, s.x - 2, s.y - s.maxh - 3, s.x + s.w + 2, s.y + 4)
+        s.path = s.ice_path = None
+        below = ICE_MAX + 2 if s.ice else 4    # les cadeaux dépassent un peu du tas
+        self._add_tiles(self.tiles, s.x - 2, s.y - s.maxh - 14, s.x + s.w + 2, s.y + below)
 
     # ---- flocons -------------------------------------------------------
     def _new_flake(self, si, initial=False):
@@ -713,6 +713,7 @@ class Sim(FestiveMixin):
             for m in [m for m in self.snowmen if m["sid"] == s.sid]:
                 self._burst_snowman(m, s)
                 self.snowmen.remove(m)
+        self._fun_shed(s, frac)
         budget = MAX_CLUMPS - len(self.clumps)
         for i, h in enumerate(s.heights):
             if h < 0.4:
@@ -788,11 +789,12 @@ class Sim(FestiveMixin):
         t = self.time
         wind = self.wind * (0.6 + 0.4 * math.sin(t * 0.13)) + 10 * math.sin(t * 0.37)
         dep = 1.2 * self.pile
+        fall, sway = self.theme.fall, self.theme.sway
 
         for k, f in enumerate(self.flakes):
             y0 = f[1]
-            f[0] += (wind * (0.4 + f[2] / 4) + f[5] * math.cos(t * 1.3 + f[4])) * dt
-            f[1] += f[3] * dt
+            f[0] += (wind * (0.4 + f[2] / 4) + sway * f[5] * math.cos(t * 1.3 + f[4])) * dt
+            f[1] += f[3] * fall * dt
             s = self.screens[f[7]]
             if f[0] < s.x():
                 f[0] += s.width()
@@ -817,6 +819,7 @@ class Sim(FestiveMixin):
         self.clumps = keep
         self._step_plow(dt)
         self._step_festive(dt)
+        self._step_fun(dt)
         self._collect_item_tiles()
 
         self.smooth_acc += dt
@@ -839,8 +842,9 @@ class Sim(FestiveMixin):
         """Tout ce qui bouge : position d'avant + position actuelle."""
         cur = set()
         add = self._add_tiles
+        reach = self.theme.reach
         for f in self.flakes:
-            r = f[2] + 1.5
+            r = f[2] * reach + 1.5
             add(cur, f[0] - r, f[1] - r, f[0] + r, f[1] + r)
         for c in self.clumps:
             r = c[4] + 1.5
@@ -855,6 +859,7 @@ class Sim(FestiveMixin):
                 add(cur, x - 52, s.y - 46, x + 52, s.y + 4)   # camion (2 sens) + gerbe
                 s.path = None
         self._festive_tiles(add, cur)
+        self._fun_tiles(add, cur)
         self.tiles |= cur | self._prev_items
         self._prev_items = cur
 
@@ -1091,14 +1096,21 @@ class Sim(FestiveMixin):
                     path.closeSubpath()
                     i = j
                 s.path = (path, path.translated(0, 1.5))
+                s.speck = None
             path, shadow = s.path
             if not path.isEmpty():
                 p.fillPath(shadow, self.SHADOW)
                 p.fillPath(path, self.SNOW)
+                if self.theme.shape is not None:
+                    self._paint_speck(p, s)
+            if s.ice:
+                self._paint_ice(p, s)
 
         self._paint_festive_ground(p, view)
+        self._paint_fun_ground(p, view)
         self._paint_plow(p)
         self._paint_festive_sky(p, view)
+        self._paint_fun_sky(p, view)
 
         def inside(rects):
             return [r for r in rects if r[0] < vr and r[2] > vl and r[1] < vb and r[3] > vt]
@@ -1114,18 +1126,21 @@ class Sim(FestiveMixin):
                     return self.over_win
             return 1.0
 
-        col = QColor(255, 255, 255)
+        col = QColor(*self.theme.clump)
         last = -1
-        for f in self.flakes:
-            if vl - 4 <= f[0] <= vr + 4 and vt - 4 <= f[1] <= vb + 4:
-                a = int(f[6] * factor(f[0], f[1]))
-                if a <= 3:
-                    continue
-                if a != last:
-                    col.setAlpha(a)
-                    p.setBrush(col)
-                    last = a
-                p.drawEllipse(QPointF(f[0], f[1]), f[2], f[2])
+        if self.theme.shape is not None:
+            self._paint_shaped_flakes(p, (vl, vt, vr, vb), factor)
+        else:
+            for f in self.flakes:
+                if vl - 4 <= f[0] <= vr + 4 and vt - 4 <= f[1] <= vb + 4:
+                    a = int(f[6] * factor(f[0], f[1]))
+                    if a <= 3:
+                        continue
+                    if a != last:
+                        col.setAlpha(a)
+                        p.setBrush(col)
+                        last = a
+                    p.drawEllipse(QPointF(f[0], f[1]), f[2], f[2])
         for c in self.clumps:
             if vl - 4 <= c[0] <= vr + 4 and vt - 4 <= c[1] <= vb + 4:
                 a = int(240 * factor(c[0], c[1]))

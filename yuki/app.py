@@ -5,9 +5,11 @@ import signal
 import sys
 
 from PyQt6.QtCore import QElapsedTimer, QRectF, QTimer
+from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QApplication
 
 from .core import Sim
+from .fun import SEASON_NAMES
 from .settings import Settings
 from .tray import make_tray
 
@@ -23,6 +25,13 @@ def load_backend():
         return WindowsBackend
     from .backends.kde import KdeBackend
     return KdeBackend
+
+
+def season_value(text):
+    try:
+        return float(SEASON_NAMES[text])
+    except KeyError:
+        raise argparse.ArgumentTypeError("choisir parmi : " + ", ".join(SEASON_NAMES)) from None
 
 
 def parse_args(backend):
@@ -42,6 +51,14 @@ def parse_args(backend):
                     help="le père Noël passe toutes les N minutes (12 ; 0 = jamais)")
     ap.add_argument("--plow-every", type=float, default=10.0,
                     help="un chasse-neige passe sur le panneau toutes les N minutes s'il y a de la neige (10 ; 0 = jamais)")
+    ap.add_argument("--fight-every", type=float, default=8.0,
+                    help="bataille de boules de neige toutes les N minutes (8 ; 0 = jamais)")
+    ap.add_argument("--cat-every", type=float, default=9.0,
+                    help="Neko-chan passe toutes les N minutes (9 ; 0 = jamais)")
+    ap.add_argument("--cursor", type=float, default=1.0,
+                    help="force du souffle du curseur (1.0 ; 0 = aucun)")
+    ap.add_argument("--season", type=season_value, default=0.0,
+                    help="auto, hiver, printemps ou automne (auto)")
     ap.add_argument("--no-tray", action="store_true",
                     help="pas d'icône ❄ dans la barre des tâches")
     ap.add_argument("--debug", action="store_true",
@@ -137,6 +154,9 @@ def main():
             return
         hidden = [sim.user_paused or sim.hidden_on(v.view) for v in live]
         if not all(hidden):
+            if backend.POLL_CURSOR and sim.cursor_force > 0:
+                pos = QCursor.pos()
+                sim.set_cursor(pos.x(), pos.y())
             sim.step(dt)
         full, tiles = sim.take_damage()
         for v, h in zip(live, hidden):

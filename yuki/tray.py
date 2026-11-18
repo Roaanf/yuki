@@ -122,9 +122,23 @@ def make_tray(app, sim, settings, battery_option=False):
         if not sim.start_santa():
             tray.showMessage("Yuki", "Le père Noël est déjà en vol !", tray.icon(), 3000)
 
+    def fight():
+        if not sim.start_fight(force=True):
+            msg = ("La bataille fait déjà rage !" if sim.fight
+                   else "Pas assez de place visible pour une bataille 🥲")
+            tray.showMessage("Yuki", msg, tray.icon(), 3000)
+
+    def cat():
+        if not sim.start_cat():
+            msg = "Neko-chan est déjà là~" if sim.cat else "Neko-chan ne trouve pas où marcher 🥲"
+            tray.showMessage("Yuki", msg, tray.icon(), 3000)
+
     act("🚜  Chasse-neige", plow)
     act("⛄  Bonhomme de neige", snowman)
     act("🎅  Père Noël", santa)
+    act("⚔  Bataille de boules de neige", fight)
+    act("🐱  Neko-chan", cat)
+    act("🎆  Feu d'artifice", lambda: sim.start_fireworks())
     menu.addSeparator()
     add_settings_menu(menu, settings, battery_option)
     pause = act("⏸  Pause", lambda: toggle_pause())
