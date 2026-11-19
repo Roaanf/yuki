@@ -13,7 +13,7 @@ import unittest
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from PyQt6.QtCore import QRect, QRectF  # noqa: E402
+from PyQt6.QtCore import QRect, QRectF, Qt  # noqa: E402
 from PyQt6.QtGui import QImage, QPainter  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
@@ -402,6 +402,49 @@ class Painting(Base):
         sim.step(1 / 30)
         sim.step(1 / 30)
         self.assertLess(len(sim.take_damage()[1]), 80)
+
+    def test_damaged_tiles_only_render_like_full_render(self):
+        # comme SnowView.render : tas redessinés seulement sur les tuiles abîmées
+        from yuki.view import SnowView, tile_rows
+
+        class Stub:
+            view = QRectF(0, 0, 1440, 900)
+            _region = SnowView._region
+
+            def width(self):
+                return 1440
+
+            def height(self):
+                return 900
+
+        def render(img, sim, rows=None):
+            p = QPainter(img)
+            if rows is not None:
+                area, runs = Stub()._region(rows)
+                p.setClipRegion(area)
+                p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+                p.fillRect(img.rect(), Qt.GlobalColor.transparent)
+                p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            sim.paint(p, Stub.view, None if rows is None else runs)
+            p.end()
+
+        for season in (fun.WINTER, fun.SPRING):
+            random.seed(3)
+            sim = make(snow=3.0)
+            sim.set_season(season)
+            sim.set_density(1.5)
+            img = QImage(1440, 900, QImage.Format.Format_ARGB32_Premultiplied)
+            img.fill(0)
+            sim.take_damage()
+            render(img, sim)
+            for _ in range(45):           # < 2 s : le lissage redessinerait tous les tas
+                sim.step(1 / 30)
+                render(img, sim, tile_rows(sim.take_damage()[1]))
+            full = QImage(1440, 900, QImage.Format.Format_ARGB32_Premultiplied)
+            full.fill(0)
+            render(full, sim)
+            self.assertEqual(img, full, season)
 
 
 if __name__ == "__main__":

@@ -15,11 +15,11 @@ from unittest import mock
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from PyQt6.QtCore import QRect, QStandardPaths  # noqa: E402
+from PyQt6.QtCore import QRect, QSettings, QStandardPaths  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from yuki.backends import macos  # noqa: E402
-from yuki.backends.macos import (ScreenInfo, build_payload, dock_rect, flip_rect,  # noqa: E402
+from yuki.backends.macos import (ScreenInfo, build_payload, corner_radii, dock_rect, flip_rect,  # noqa: E402
                                  parse_on_battery)
 from yuki.core import Sim  # noqa: E402
 
@@ -86,6 +86,20 @@ class Dock(unittest.TestCase):
         d = win(50, 0, 0, 1440, 900, layer=20, owner="Dock")
         self.assertIsNone(dock_rect(MAIN, [d]))
 
+    def test_accessibility_frame_gives_width(self):
+        self.assertEqual(dock_rect(MAIN, [], [(500, 838, 440, 58)]), (500, 830, 440, 70))
+
+    def test_accessibility_frame_of_another_screen_is_ignored(self):
+        self.assertIsNone(dock_rect(MAIN, [], [(1600, 838, 440, 58)]))
+
+    def test_corner_radii_by_version(self):
+        self.assertEqual(corner_radii("26.1"), (24.0, 21.0))
+        self.assertEqual(corner_radii("16.0"), (24.0, 21.0))
+        self.assertEqual(corner_radii("15.6.1"), (10.0, 16.0))
+        self.assertEqual(corner_radii("10.16"), (10.0, 16.0))
+        self.assertEqual(corner_radii("10.15.7"), (5.0, 0.0))
+        self.assertEqual(corner_radii(""), (10.0, 16.0))
+
     def test_hidden_dock_small_inset(self):
         self.assertIsNone(dock_rect(ScreenInfo(1, (0, 0, 1440, 900), (0, 25, 1440, 871)), []))
 
@@ -151,6 +165,9 @@ class Cocoa:
         self.all_queries = 0
         self.window = FakeWindow()
         self.policy = None
+        self.trusted = False
+        self.prompts = []
+        self.dock_list = (500, 838, 440, 58)
         self.ended = []
         cocoa = self
 
@@ -167,6 +184,16 @@ class Cocoa:
             def __exit__(self, *_):
                 return False
 
+        def copy_attribute(element, attribute, _out):
+            if attribute == "AXChildren":
+                return 0, ["menu", "list"]
+            if attribute == "AXRole":
+                return 0, "AXList" if element == "list" else "AXMenu"
+            x, y, w, h = cocoa.dock_list
+            if attribute == "AXPosition":
+                return 0, ("point", types.SimpleNamespace(x=x, y=y))
+            return 0, ("size", types.SimpleNamespace(width=w, height=h))
+
         process = types.SimpleNamespace(
             beginActivityWithOptions_reason_=lambda *_: "token",
             endActivity_=self.ended.append)
@@ -176,6 +203,9 @@ class Cocoa:
                     setActivationPolicy_=lambda p: setattr(cocoa, "policy", p))),
                 NSApplicationActivationPolicyAccessory=1,
                 NSScreen=types.SimpleNamespace(screens=lambda: [FakeScreen()]),
+                NSRunningApplication=types.SimpleNamespace(
+                    runningApplicationsWithBundleIdentifier_=lambda _b: [
+                        types.SimpleNamespace(processIdentifier=lambda: 88)]),
                 NSColor=types.SimpleNamespace(clearColor=lambda: "clear"),
                 NSWindowCollectionBehaviorCanJoinAllSpaces=1,
                 NSWindowCollectionBehaviorStationary=16,
@@ -190,6 +220,14 @@ class Cocoa:
                 CGWindowListCopyWindowInfo=copy_info, kCGNullWindowID=0, kCGMainMenuWindowLevel=24,
                 kCGWindowListOptionAll=0, kCGWindowListOptionOnScreenOnly=1,
                 kCGWindowListExcludeDesktopElements=16),
+            "ApplicationServices": types.SimpleNamespace(
+                AXIsProcessTrusted=lambda: cocoa.trusted,
+                AXIsProcessTrustedWithOptions=self.prompts.append,
+                kAXTrustedCheckOptionPrompt="prompt",
+                AXUIElementCreateApplication=lambda pid: "app",
+                AXUIElementCopyAttributeValue=copy_attribute,
+                AXValueGetValue=lambda value, _kind, _out: (True, value[1]),
+                kAXValueCGPointType=1, kAXValueCGSizeType=2),
         }
 
 
@@ -201,9 +239,12 @@ class Backend(unittest.TestCase):
     def setUp(self):
         self.cocoa = Cocoa()
         self.tmp = tempfile.TemporaryDirectory()
+        ini = os.path.join(self.tmp.name, "yuki-macos.ini")
         patches = [mock.patch.dict(sys.modules, self.cocoa.modules),
                    mock.patch.object(QStandardPaths, "writableLocation",
-                                     return_value=self.tmp.name)]
+                                     return_value=self.tmp.name),
+                   mock.patch.object(macos, "QSettings",
+                                     lambda *_: QSettings(ini, QSettings.Format.IniFormat))]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -322,6 +363,28 @@ class Backend(unittest.TestCase):
         self.backend.start(self.sim, self.set_paused)
         self.addCleanup(self.backend.poll_timer.stop)
         self.assertFalse(self.backend.power_timer.isActive())
+
+    def start(self):
+        with mock.patch("sys.stderr"):
+            self.backend.start(self.sim, self.set_paused)
+        self.addCleanup(self.backend.poll_timer.stop)
+        self.addCleanup(self.backend.power_timer.stop)
+
+    def test_accessibility_is_asked_only_once(self):
+        self.start()
+        self.backend.stop()
+        self.backend.lock.lock()
+        self.start()
+        self.assertEqual(len(self.cocoa.prompts), 1)
+        self.assertNotIn("dock:1", self.sim.surfaces)   # pas autorisé : largeur inconnue
+
+    def test_dock_width_from_accessibility(self):
+        self.cocoa.trusted = True
+        self.start()
+        self.assertEqual(self.cocoa.prompts, [])
+        dock = self.sim.surfaces["dock:1"]
+        self.assertEqual((dock.x, dock.y, dock.w), (500, 830, 440))
+        self.assertEqual(dock.radius, self.sim.dock_radius)
 
     def test_overlay_window_setup(self):
         views = self.backend.create_views(self.sim, [QRect(0, 0, 640, 480)])

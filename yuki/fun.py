@@ -38,12 +38,18 @@ CAT_COATS = (((240, 165, 90), (190, 110, 55)), ((120, 125, 140), (75, 78, 92)),
 Theme = collections.namedtuple("Theme", "shape colors pile shadow clump fall sway size reach")
 
 
+def _flat(path):
+    """Polygone de ~17 points : 2× plus rapide à remplir qu'une courbe aplatie à chaque flocon.
+    Agrandi avant d'aplatir, sinon Qt ne garde que 5 points à cette taille."""
+    return QTransform.fromScale(1 / 8, 1 / 8).map(QTransform.fromScale(8, 8).map(path).toFillPolygon())
+
+
 def _petal():
     path = QPainterPath()
     path.moveTo(0, -1)
     path.cubicTo(0.95, -0.7, 0.8, 0.7, 0, 1)
     path.cubicTo(-0.8, 0.7, -0.95, -0.7, 0, -1)
-    return path
+    return _flat(path)
 
 
 def _leaf():
@@ -51,7 +57,7 @@ def _leaf():
     path.moveTo(0, -1.15)
     path.quadTo(1.05, -0.2, 0, 1.1)
     path.quadTo(-1.05, -0.2, 0, -1.15)
-    return path
+    return _flat(path)
 
 
 THEMES = {
@@ -129,6 +135,7 @@ class FunMixin:
             self.theme = THEMES[season]
             self.SNOW = QColor(*self.theme.pile)
             self.SHADOW = QColor(*self.theme.shadow)
+            self.SPECK = QColor(*self.theme.colors[2 % len(self.theme.colors)])
             self.full = True
         if now.month == 12 and now.day == 31 and now.hour >= 18:
             self.fireworks_gap = (40.0, 70.0, 3)
@@ -169,7 +176,7 @@ class FunMixin:
             if s.sid == skip or not s.x <= x < s.x + s.w:
                 continue
             c = int((x - s.x) / COL)
-            if c < len(s.heights) and s.mask[c] and y0 - 1 <= s.y - s.heights[c] <= y1 + 1:
+            if c < len(s.heights) and s.mask[c] and y0 - 1 <= s.y + s.base[c] - s.heights[c] <= y1 + 1:
                 return s, x - s.x
         return None
 
@@ -228,7 +235,8 @@ class FunMixin:
             if not s.x <= x < s.x + s.w:
                 continue
             c = int((x - s.x) / COL)
-            if c >= len(s.heights) or not s.mask[c] or not s.y - s.heights[c] - 8 <= y <= s.y + 3:
+            top = s.y + s.base[c] if c < len(s.heights) else s.y
+            if c >= len(s.heights) or not s.mask[c] or not top - s.heights[c] - 8 <= y <= top + 3:
                 continue
             share = min(0.75, self.cursor_force * speed / 2500)
             for i in range(max(0, c - 2), min(len(s.heights), c + 3)):
@@ -236,11 +244,10 @@ class FunMixin:
                 if take < 0.15 or not s.mask[i] or len(self.clumps) >= MAX_CLUMPS:
                     continue
                 s.heights[i] -= take
-                self.clumps.append([s.x + (i + random.random()) * COL, s.y - s.heights[i] - 1,
+                self.clumps.append([s.x + (i + random.random()) * COL, s.y + s.base[i] - s.heights[i] - 1,
                                     vx * 0.3 + random.uniform(-35, 35),
                                     -speed * 0.1 - random.uniform(40, 120),
                                     min(2.6, 0.9 + math.sqrt(take) * 0.7), take, s.sid])
-            s.path = None
             self._add_tiles(self.tiles, s.x + (c - 4) * COL, s.y - s.maxh - 3,
                             s.x + (c + 5) * COL, s.y + 4)
             return
@@ -559,7 +566,7 @@ class FunMixin:
         if len(s.ice) < min(14, int(s.w / 70)) and random.random() < 0.25 * rate:
             c = random.randrange(n)
             rel = (c + 0.5) * COL
-            if s.mask[c] and s.heights[c] > 2.5 and all(abs(i[0] - rel) > 12 for i in s.ice):
+            if s.mask[c] and not s.base[c] and s.heights[c] > 2.5 and all(abs(i[0] - rel) > 12 for i in s.ice):
                 s.ice.append([rel, 0.8, random.uniform(5.0, ICE_MAX), random.uniform(1.6, 3.0)])
         for i in s.ice:
             c = min(n - 1, int(i[0] // COL))
@@ -792,6 +799,7 @@ class FunMixin:
         base = p.transform()
         t = self.time
         color = QColor()
+        p.setPen(Qt.PenStyle.NoPen)
         for f in self.flakes:
             if not (vl - 8 <= f[0] <= vr + 8 and vt - 8 <= f[1] <= vb + 8):
                 continue
@@ -807,19 +815,19 @@ class FunMixin:
             tr.rotateRadians(spin)
             tr.scale(size, size * (0.45 + 0.55 * abs(math.cos(spin * 1.4))))
             p.setTransform(tr)
-            p.fillPath(theme.shape, color)
+            p.setBrush(color)
+            p.drawPolygon(theme.shape)
         p.setTransform(base)
 
-    def _paint_speck(self, p, s):
-        if s.speck is None:
-            s.speck = QPainterPath()
-            for i in range(0, len(s.heights), 2):
-                h = s.heights[i]
-                if h >= 1.5 and s.mask[i]:     # placement fixe : le tas ne scintille pas
-                    x = s.x + (i + 0.5) * COL + ((i * 13) % 5 - 2) * 0.6
-                    y = s.y - 0.8 - (h - 1.6) * ((i * 37) % 100) / 100
-                    s.speck.addEllipse(QPointF(x, y), 2.0, 1.1)
-        p.fillPath(s.speck, QColor(*self.theme.colors[2]))
+    def _paint_speck(self, p, s, a, b):
+        speck = QPainterPath()
+        for i in range(a + a % 2, b, 2):
+            h = s.heights[i]
+            if h >= 1.5 and s.mask[i]:     # placement fixe : le tas ne scintille pas
+                x = s.x + (i + 0.5) * COL + ((i * 13) % 5 - 2) * 0.6
+                y = s.y + s.base[i] - 0.8 - (h - 1.6) * ((i * 37) % 100) / 100
+                speck.addEllipse(QPointF(x, y), 2.0, 1.1)
+        p.fillPath(speck, self.SPECK)
 
     def _paint_ice(self, p, s):
         if s.ice_path is None:

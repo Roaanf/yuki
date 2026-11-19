@@ -1,10 +1,22 @@
 """Fenêtre overlay transparente, une par écran."""
 
+from bisect import bisect_left, bisect_right
+
 from PyQt6.QtCore import QEvent, QRect, QRectF, Qt
 from PyQt6.QtGui import (QBackingStore, QPainter, QPlatformSurfaceEvent, QRegion, QSurface,
                          QSurfaceFormat, QWindow)
 
 from .core import TILE
+
+
+def tile_rows(tiles):
+    """{ligne: [colonnes triées]} : groupé une fois par image, puis découpé par chaque vue."""
+    rows = {}
+    for tx, ty in tiles:
+        rows.setdefault(ty, []).append(tx)
+    for xs in rows.values():
+        xs.sort()
+    return rows
 
 
 class SnowView(QWindow):
@@ -47,23 +59,27 @@ class SnowView(QWindow):
                 self.store.resize(self.size())
         return super().event(e)
 
-    def _region(self, tiles):
-        """Tuiles abîmées -> QRegion locale, en fusionnant les tuiles voisines d'une même ligne."""
+    def _region(self, rows):
+        """Tuiles abîmées (voir tile_rows) -> (QRegion locale, {ligne de tuiles: [(x0, x1) globaux]}),
+        en fusionnant les tuiles voisines d'une même ligne."""
         vx, vy = int(self.view.x()), int(self.view.y())
         tx0, ty0 = vx // TILE, vy // TILE
         tx1, ty1 = (vx + self.width()) // TILE, (vy + self.height()) // TILE
-        rows = {}
-        for tx, ty in tiles:
-            if tx0 <= tx <= tx1 and ty0 <= ty <= ty1:
-                rows.setdefault(ty, []).append(tx)
-        rects = []
+        rects, runs = [], {}
         for ty in sorted(rows):                 # ordre « y puis x » exigé par setRects
-            xs = sorted(rows[ty])
+            if not ty0 <= ty <= ty1:
+                continue
+            xs = rows[ty]
+            xs = xs[bisect_left(xs, tx0):bisect_right(xs, tx1)]
+            if not xs:
+                continue
+            row = runs[ty] = []
             start = prev = xs[0]
             for tx in xs[1:] + [None]:
                 if tx is not None and tx == prev + 1:
                     prev = tx
                     continue
+                row.append((start * TILE, (prev + 1) * TILE))
                 rects.append(QRect(start * TILE - vx, ty * TILE - vy,
                                    (prev - start + 1) * TILE, TILE))
                 if tx is not None:
@@ -71,20 +87,19 @@ class SnowView(QWindow):
         reg = QRegion()
         if rects:
             reg.setRects(rects)
-        return reg.intersected(QRect(0, 0, self.width(), self.height()))
+        return reg.intersected(QRect(0, 0, self.width(), self.height())), runs
 
-    def render(self, full=True, tiles=()):
+    def render(self, full=True, rows=None):
         if self.frozen or not self.isExposed() or self.width() <= 0 or self.height() <= 0:
             return
         if self.store is None:
             self.store = QBackingStore(self)
             self.store.resize(self.size())
             self.needs_full = True
-        whole = QRegion(0, 0, self.width(), self.height())
-        if full or self.needs_full:
-            area = whole
+        if full or self.needs_full or rows is None:
+            area, runs = QRegion(0, 0, self.width(), self.height()), None
         else:
-            area = self._region(tiles)
+            area, runs = self._region(rows)
             if area.isEmpty():
                 return                       # rien n'a bougé ici : pas de dessin, pas d'envoi
         self.needs_full = False
@@ -100,7 +115,7 @@ class SnowView(QWindow):
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         if not (self.sim.user_paused or self.sim.hidden_on(self.view)):
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
-            self.sim.paint(p, self.view)
+            self.sim.paint(p, self.view, runs)
         p.end()
         self.store.endPaint()
         self.store.flush(area)

@@ -26,7 +26,7 @@ fi
 
 mkdir -p "$(dirname "$VENV")" "$(dirname "$PLIST")" "$(dirname "$LOG")" "$BIN"
 python3 -m venv "$VENV"
-"$VENV/bin/python" -m pip install --quiet --upgrade PyQt6 pyobjc-framework-Quartz pyobjc-framework-Cocoa
+"$VENV/bin/python" -m pip install --quiet --upgrade PyQt6 pyobjc-framework-Quartz pyobjc-framework-Cocoa pyobjc-framework-ApplicationServices
 
 # plistlib s'occupe de l'échappement XML des chemins et des options.
 # shellcheck disable=SC2086

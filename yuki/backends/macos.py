@@ -6,10 +6,11 @@ Les fonctions du haut travaillent sur de simples dictionnaires : elles se testen
 import collections
 import ctypes
 import os
+import platform
 import sys
 import time
 
-from PyQt6.QtCore import QProcess, QRect, QTimer
+from PyQt6.QtCore import QProcess, QRect, QSettings, QTimer
 
 from ..core import WindowFeed
 from ..view import SnowView
@@ -35,6 +36,24 @@ K_ALPHA = "kCGWindowAlpha"
 K_PID = "kCGWindowOwnerPID"
 K_OWNER = "kCGWindowOwnerName"
 K_NAME = "kCGWindowName"
+
+
+def corner_radii(version):
+    """Rayon des coins (fenêtres, Dock) en points, mesuré sur des captures. version : « 26.1 »."""
+    try:
+        major, minor = (int(p) for p in (version.split(".") + ["0"])[:2])
+    except ValueError:
+        return 10.0, 16.0
+    if major == 10 and minor >= 16:
+        major = 11               # Python compilé avec un vieux SDK : Big Sur se dit « 10.16 »
+    elif major == 16:
+        major = 26               # … et Tahoe se dit « 16 »
+    if major >= 26:
+        return 24.0, 21.0
+    if major >= 11:
+        return 10.0, 16.0
+    return 5.0, 0.0
+
 
 # frame et visible : (x, y, w, h) en points, origine en haut à gauche de l'écran principal
 ScreenInfo = collections.namedtuple("ScreenInfo", "key frame visible")
@@ -67,10 +86,12 @@ def holds_snow(info, own_pid):
     return r is not None and r[2] >= MIN_WINDOW and r[3] >= MIN_WINDOW
 
 
-def dock_rect(screen, onscreen):
+def dock_rect(screen, onscreen, ax_frames=()):
     """Partie visible du Dock en bas de cet écran, ou None (masqué, sur le côté, largeur inconnue).
 
-    Sans largeur mesurée, pas de surface : la neige flotterait de chaque côté du Dock.
+    La largeur vient de l'accessibilité (cadre de la liste d'icônes). Sans elle, on tente les
+    fenêtres du Dock, souvent aussi larges que l'écran : alors pas de surface plutôt que de la
+    neige qui flotte de chaque côté.
     """
     fx, fy, fw, fh = screen.frame
     vx, vy, vw, vh = screen.visible
@@ -79,6 +100,10 @@ def dock_rect(screen, onscreen):
     if inset <= DOCK_MIN_INSET:
         return None
     top = bottom - inset
+    for r in ax_frames:
+        if r[2] >= 40 and r[0] >= fx - 1 and r[0] + r[2] <= fx + fw + 1 \
+                and top - 20 <= r[1] < bottom and r[1] + r[3] > top:
+            return (r[0], top, r[2], inset)
     best = None
     for info in onscreen:
         if str(info.get(K_OWNER, "")) != "Dock" or int(info.get(K_LAYER, -1)) != DOCK_LAYER:
@@ -91,7 +116,7 @@ def dock_rect(screen, onscreen):
     return None if best is None else (best[0], top, best[2], inset)
 
 
-def build_payload(onscreen, known_ids, screens, own_pid, debug=False):
+def build_payload(onscreen, known_ids, screens, own_pid, debug=False, dock_frames=()):
     """Listes CGWindow (du haut vers le bas) -> dictionnaire attendu par Sim.apply()."""
     items, alive = [], {str(i) for i in known_ids}
     for info in reversed(list(onscreen)):
@@ -108,7 +133,7 @@ def build_payload(onscreen, known_ids, screens, own_pid, debug=False):
     for s in screens:
         sid = "dock:%s" % s.key
         alive.add(sid)          # Dock disparu (plein écran…) : sa neige s'endort
-        rect = dock_rect(s, onscreen)
+        rect = dock_rect(s, onscreen, dock_frames)
         if rect is not None:
             item = [sid] + list(rect) + [1, 0, 0]
             if debug:
@@ -148,6 +173,11 @@ class MacBackend(BatteryPauseMixin):
         except ImportError as e:
             sys.exit("yuki: %s\n  pip install pyobjc-framework-Quartz pyobjc-framework-Cocoa" % e)
         self.AppKit, self.Foundation, self.objc, self.Quartz = AppKit, Foundation, objc, Quartz
+        try:
+            import ApplicationServices as AX   # largeur exacte du Dock, avec autorisation
+        except ImportError:
+            AX = None
+        self.AX = AX
         self.app = app
         self.args = args
         self.pid = os.getpid()
@@ -162,6 +192,8 @@ class MacBackend(BatteryPauseMixin):
             Foundation.NSActivityUserInitiatedAllowingIdleSystemSleep, "Yuki : animation de la neige")
 
         self.screens = []
+        self.dock_frames = []
+        self.last_debug_dock = None
         self.visible_ids = None
         self.known_ids = []
         self.last_payload = None
@@ -180,6 +212,64 @@ class MacBackend(BatteryPauseMixin):
     def attach(self, sim):
         self.sim = sim
         self.feed = WindowFeed(sim, self.args.debug)
+        sim.window_radius, sim.dock_radius = corner_radii(platform.mac_ver()[0])
+
+    # ---- Dock : accessibilité -------------------------------------------
+    def _ask_accessibility(self):
+        """Demande une seule fois l'autorisation : sans elle, pas de neige sur le Dock."""
+        AX = self.AX
+        if AX is None:
+            print("yuki: pyobjc-framework-ApplicationServices manque, pas de neige sur le Dock",
+                  file=sys.stderr)
+            return
+        if AX.AXIsProcessTrusted():
+            return
+        print("yuki: autorise Python dans Réglages Système > Confidentialité et sécurité > "
+              "Accessibilité pour la neige sur le Dock", file=sys.stderr)
+        store = QSettings("yuki", "yuki-macos")
+        if store.value("accessibility_asked") is None:
+            store.setValue("accessibility_asked", True)
+            store.sync()
+            AX.AXIsProcessTrustedWithOptions({AX.kAXTrustedCheckOptionPrompt: True})
+
+    def _ax(self, element, attribute):
+        err, value = self.AX.AXUIElementCopyAttributeValue(element, attribute, None)
+        return None if err else value
+
+    def _read_dock_frames(self):
+        """Cadre de la liste d'icônes du Dock (points, origine en haut à gauche), si autorisé."""
+        AX = self.AX
+        if AX is None or not AX.AXIsProcessTrusted():
+            return []
+        apps = self.AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_(
+            "com.apple.dock")
+        if not apps:
+            return []
+        out = []
+        for child in self._ax(AX.AXUIElementCreateApplication(apps[0].processIdentifier()),
+                              "AXChildren") or []:
+            if self._ax(child, "AXRole") != "AXList":
+                continue
+            pos, size = self._ax(child, "AXPosition"), self._ax(child, "AXSize")
+            if pos is None or size is None:
+                continue
+            ok, p = AX.AXValueGetValue(pos, AX.kAXValueCGPointType, None)
+            ok2, s = AX.AXValueGetValue(size, AX.kAXValueCGSizeType, None)
+            if ok and ok2:
+                out.append((int(round(p.x)), int(round(p.y)),
+                            int(round(s.width)), int(round(s.height))))
+        return out
+
+    def _debug_dock(self, onscreen):
+        cg = [(int(w.get(K_LAYER, -1)), window_rect(w)) for w in onscreen
+              if str(w.get(K_OWNER, "")) == "Dock"]
+        state = (tuple(self.screens), tuple(self.dock_frames), tuple(cg))
+        if state != self.last_debug_dock:
+            self.last_debug_dock = state
+            print("\n--- Dock ---\nécrans (frame, visible) : %s\naccessibilité : %s\n"
+                  "fenêtres du Dock (niveau, cadre) : %s" % (
+                      [(s.frame, s.visible) for s in self.screens], self.dock_frames or "rien", cg),
+                  flush=True)
 
     # ---- overlay -------------------------------------------------------
     def _configure(self, view):
@@ -251,9 +341,13 @@ class MacBackend(BatteryPauseMixin):
                 self.next_alive = now + ALIVE_EVERY
         if now >= self.next_screens:
             self.screens = self._read_screens()
+            self.dock_frames = self._read_dock_frames()
             self.next_screens = now + SCREENS_EVERY
+            if self.args.debug:
+                self._debug_dock(onscreen)
 
-        payload = build_payload(onscreen, self.known_ids, self.screens, self.pid, self.args.debug)
+        payload = build_payload(onscreen, self.known_ids, self.screens, self.pid, self.args.debug,
+                                self.dock_frames)
         if payload != self.last_payload:
             if self.last_payload is not None and payload["w"] != self.last_payload["w"]:
                 self.moving_until = now + MOVING_HOLD
@@ -288,6 +382,7 @@ class MacBackend(BatteryPauseMixin):
     # ---- cycle de vie --------------------------------------------------
     def start(self, sim, set_paused):
         self.set_paused = set_paused
+        self._ask_accessibility()
         self.poll()
         self.poll_timer.start(POLL_IDLE_MS)
         self._start_power()

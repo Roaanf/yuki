@@ -115,9 +115,11 @@ curl -fsSL https://github.com/Roaanf/yuki/archive/refs/heads/main.tar.gz | tar x
 ~/src/yuki/install-macos.sh
 ```
 
-Le script crée un environnement Python dans `~/Library/Application Support/Yuki/venv`, y installe PyQt6 et pyobjc, puis ajoute un LaunchAgent qui lance Yuki à la connexion. Aucune autorisation système n'est demandée.
+Le script crée un environnement Python dans `~/Library/Application Support/Yuki/venv`, y installe PyQt6 et pyobjc, puis ajoute un LaunchAgent qui lance Yuki à la connexion.
 
-- La neige tient sur les fenêtres et sur le Dock, s'il est en bas de l'écran, visible et si sa largeur peut être mesurée. Sinon, elle tombe jusqu'au bas de l'écran, où roule le chasse-neige.
+- La neige tient sur les fenêtres, en suivant leurs coins arrondis.
+- Pour qu'elle tienne aussi sur le Dock, macOS doit autoriser Python dans **Réglages Système > Confidentialité et sécurité > Accessibilité** : c'est le seul moyen de connaître la largeur du Dock. Yuki le demande une fois au premier lancement, et la neige apparaît sur le Dock dès que l'autorisation est donnée. Sans elle, ou si le Dock est masqué ou sur le côté, la neige tombe jusqu'au bas de l'écran, où roule le chasse-neige.
+- `--debug` affiche ce que Yuki sait du Dock : utile si la neige y est mal placée.
 - Yuki se met en pause sur batterie et reprend sur secteur. Pour continuer sur batterie, coche « Neiger sur batterie » dans ⚙ Réglages.
 - Rien ne s'affiche sur les apps en plein écran.
 - Pour changer les réglages : `YUKI_ARGS="--density 0.5" ~/src/yuki/install-macos.sh`.
@@ -133,9 +135,10 @@ rm -f "$HOME/Library/LaunchAgents/org.roland.yuki.plist"
 rm -rf "$HOME/Library/Application Support/Yuki"
 rm -f "$HOME/.local/bin/yuki-restart" "$HOME/Library/Logs/yuki.log"
 defaults delete com.yuki.yuki 2>/dev/null
+defaults delete com.yuki.yuki-macos 2>/dev/null
 ```
 
-PyQt6 et pyobjc étaient installés uniquement dans cet environnement : rien d'autre ne reste sur le système. Tu peux ensuite supprimer le dossier du dépôt.
+PyQt6 et pyobjc étaient installés uniquement dans cet environnement. Retire aussi Python de la liste Accessibilité dans Réglages Système, si tu l'avais autorisé. Tu peux ensuite supprimer le dossier du dépôt.
 
 ## Windows
 

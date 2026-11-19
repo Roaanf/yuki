@@ -12,6 +12,7 @@ from .core import Sim
 from .fun import SEASON_NAMES
 from .settings import Settings
 from .tray import make_tray
+from .view import tile_rows
 
 PAUSED_TICK_MS = 200   # en pause, inutile de réveiller le processus à chaque image
 
@@ -159,11 +160,12 @@ def main():
                 sim.set_cursor(pos.x(), pos.y())
             sim.step(dt)
         full, tiles = sim.take_damage()
+        rows = None if full else tile_rows(tiles)
         for v, h in zip(live, hidden):
             if h != v.blank:
                 v.render(full=True)                 # passage plein écran : on vide / on remet tout
             elif not h:
-                v.render(full=full, tiles=tiles)
+                v.render(full=full, rows=rows)
             v.blank = h
 
     tray = None if args.no_tray else make_tray(app, sim, settings, backend.HAS_BATTERY_OPTION)

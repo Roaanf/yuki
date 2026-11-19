@@ -6,7 +6,7 @@ import sys
 import time
 
 from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
-from PyQt6.QtGui import QColor, QPainterPath, QPen, QRegion
+from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QRegion
 
 from .fun import AUTO, FunMixin
 from .shared import (COL, GRAVITY, ICE_MAX, MAX_CLUMPS, MAX_GROUND, MAX_PILE, SHED_SPEED, TILE,
@@ -19,19 +19,20 @@ from .shared import (COL, GRAVITY, ICE_MAX, MAX_CLUMPS, MAX_GROUND, MAX_PILE, SH
 class Surface:
     """Un bord qui retient la neige : haut d'une fenêtre, d'un panneau, ou le sol."""
     __slots__ = ("sid", "x", "y", "w", "h", "maxh", "heights", "mask", "t", "ground", "dock",
-                 "path", "ice", "ice_path", "speck")
+                 "ice", "ice_path", "radius", "base", "radius_key")
 
     def __init__(self, sid, x, y, w, h, maxh, t, ground=False):
         self.sid, self.x, self.y, self.w, self.h = sid, x, y, w, h
         self.maxh, self.t, self.ground = maxh, t, ground
         self.dock = False
-        self.path = None          # contour de neige en cache (None = à recalculer)
         self.ice = []             # glaçons [position, longueur, longueur max, demi-largeur]
         self.ice_path = None
-        self.speck = None         # pétales ou feuilles visibles dans le tas (en cache)
         n = max(1, int(w // COL))
         self.heights = [0.0] * n
         self.mask = [True] * n
+        self.radius = 0.0         # coins arrondis (macOS) : le bord descend près des coins
+        self.base = [0.0] * n     # descente du bord au centre de chaque colonne
+        self.radius_key = None
 
     def resize(self, w):
         n = max(1, int(w // COL))
@@ -40,6 +41,8 @@ class Surface:
         if n != m:
             self.heights = [old[min(m - 1, int(i * m / n))] for i in range(n)]
             self.mask = [True] * n
+            self.base = [0.0] * n
+            self.radius_key = None
         self.w = w
         self.ice = [i for i in self.ice if i[0] < w - 4]
         self.ice_path = None
@@ -47,7 +50,33 @@ class Surface:
     def cap(self, i):
         n = len(self.heights)
         d = min(i, n - 1 - i)
-        return min(self.maxh, 1.5 + d * 1.2)   # bouts arrondis
+        c = min(self.maxh, 1.5 + d * 1.2)   # bouts arrondis
+        if self.radius:
+            c *= max(0.0, 1 - self.base[i] / self.radius) ** 2   # la neige glisse dans la pente
+        return c
+
+    def drop(self, rel):
+        """Combien le bord descend à rel (px depuis la gauche) à cause des coins arrondis."""
+        r = self.radius
+        d = min(rel, self.w - rel)
+        if r <= 0 or d >= r:
+            return 0.0
+        d = max(0.0, d)
+        return r - math.sqrt(r * r - (r - d) ** 2)
+
+    def set_radius(self, radius):
+        radius = max(0.0, min(radius, self.w / 2))
+        if self.radius_key == (radius, self.w):
+            return False
+        self.radius_key = (radius, self.w)
+        self.radius = radius
+        n = len(self.heights)
+        self.base = [0.0] * n
+        if radius:
+            for i in range(n):
+                if min(i, n - 1 - i) * COL < radius:
+                    self.base[i] = self.drop((i + 0.5) * COL)
+        return True
 
 
 # --------------------------------------------------------------------------
@@ -56,6 +85,8 @@ class Surface:
 # posées au-dessus de leur bord) : on ne les dessine que là où on les verrait.
 # --------------------------------------------------------------------------
 BUILD_END = 16.5        # durée d'une construction de bonhomme (s)
+LAND_BAND = 16          # hauteur des tranches de l'index des surfaces (px)
+FLAKE_SUB = 8           # positions sous-pixel des sprites de flocons, par axe
 MAX_SNOWMEN = 5
 SNOWMAN_LIFE = 20 * 60  # un bonhomme fond au bout de 20 min
 
@@ -169,7 +200,6 @@ class FestiveMixin:
                 c = int(m["rel"] // COL)
                 for i in range(max(0, c - 4), min(len(s.heights), c + 5)):
                     s.heights[i] = max(0.0, s.heights[i] - 0.6 * dt)
-                s.path = None
             if m["age"] > SNOWMAN_LIFE and m["melt"] is None:
                 m["melt"] = 0.0
             if m["melt"] is not None:
@@ -561,6 +591,8 @@ class Sim(FestiveMixin, FunMixin):
         self.over_max = 0.0       # opacité des flocons au-dessus d'une fenêtre maximisée
         self.over_win = 1.0       # … au-dessus des autres fenêtres
         self.user_paused = False  # pause depuis l'icône
+        self.window_radius = 0.0  # coins arrondis des fenêtres et du Dock (réglés par le backend)
+        self.dock_radius = 0.0
         self.plows = []           # chasse-neige en cours (un par panneau)
         self.plow_every = 10.0    # minutes (0 = jamais tout seul)
         self.plow_timer = 0.0
@@ -571,6 +603,8 @@ class Sim(FestiveMixin, FunMixin):
         self.dormant = {}
         self.order = []            # du bas vers le haut
         self.masks_dirty = True
+        self._tops = {}            # voir _index_tops, refait avec les masques
+        self._sprites = {}         # voir _flake_sprite
         self.smooth_acc = 0.0
         self.flakes = []           # [x, y, r, vy, phase, amp, alpha, screen]
         self.clumps = []           # [x, y, vx, vy, r]
@@ -631,8 +665,8 @@ class Sim(FestiveMixin, FunMixin):
 
     def _touch(self, s):
         """Le tas de neige de s a changé : cache invalidé + bande à redessiner."""
-        s.path = s.ice_path = None
-        below = ICE_MAX + 2 if s.ice else 4    # les cadeaux dépassent un peu du tas
+        s.ice_path = None
+        below = (ICE_MAX + 2 if s.ice else 4) + s.radius   # les cadeaux dépassent un peu du tas
         self._add_tiles(self.tiles, s.x - 2, s.y - s.maxh - 14, s.x + s.w + 2, s.y + below)
 
     # ---- flocons -------------------------------------------------------
@@ -688,6 +722,7 @@ class Sim(FestiveMixin, FunMixin):
             s.dock = bool(len(item) > 5 and item[5])
             if w != s.w:
                 s.resize(w)
+            s.set_radius(self.dock_radius if s.dock else self.window_radius)
             new_order.append(s)
 
         for sid, s in self.surfaces.items():
@@ -728,7 +763,7 @@ class Sim(FestiveMixin, FunMixin):
             for _ in range(k):
                 self.clumps.append([
                     s.x + (i + random.random()) * COL,
-                    s.y - random.random() * h,
+                    s.y + s.base[i] - random.random() * h,
                     max(-120.0, min(120.0, vx * 0.15)) + random.uniform(-30, 30),
                     max(-80.0, min(vy * 0.15, 0)) + random.uniform(-40, 10),
                     r, mass, s.sid])        # s.sid : ne retombe pas sur sa fenêtre d'origine
@@ -760,25 +795,38 @@ class Sim(FestiveMixin, FunMixin):
                     mask[c0:c1] = [False] * (c1 - c0)
             s.mask = mask
             self._touch(s)
+        self._index_tops()
         self.masks_dirty = False
 
     # ---- physique -------------------------------------------------------
-    def _land(self, x, y0, y1, amount, skip=None):
+    def _index_tops(self):
+        """Surfaces (du haut vers le bas de la pile) dont le tas peut croiser chaque tranche de y."""
+        index = {}
         for s in reversed(self.order):
+            for k in range(int((s.y - s.maxh - 1) // LAND_BAND), int((s.y + s.radius + 1) // LAND_BAND) + 1):
+                index.setdefault(k, []).append(s)
+        self._tops = index
+
+    def _land(self, x, y0, y1, amount, skip=None):
+        k0, k1 = int((y0 - 1) // LAND_BAND), int((y1 + 1) // LAND_BAND)
+        if k0 == k1:
+            cands = self._tops.get(k0, ())   # cas courant : aucune surface à cette hauteur
+        else:
+            cands = reversed(self.order) if k0 < k1 else ()   # plusieurs tranches : ordre exact
+        for s in cands:
             if s.sid == skip or not (s.x <= x < s.x + s.w):
                 continue
             c = int((x - s.x) / COL)
             if c >= len(s.heights) or not s.mask[c]:
                 continue
-            sy = s.y - s.heights[c]
+            sy = s.y + s.base[c] - s.heights[c]
             if y0 - 1 <= sy <= y1 + 1:
                 for dc, wgt in ((-1, 0.25), (0, 0.5), (1, 0.25)):
                     i = c + dc
                     if 0 <= i < len(s.heights) and s.mask[i]:
                         s.heights[i] = min(s.cap(i), s.heights[i] + amount * wgt)
-                s.path = None
                 self._add_tiles(self.tiles, s.x + (c - 2) * COL, s.y - s.maxh - 3,
-                                s.x + (c + 3) * COL, s.y + 4)
+                                s.x + (c + 3) * COL, s.y + 4 + s.radius)
                 return True
         return False
 
@@ -791,17 +839,19 @@ class Sim(FestiveMixin, FunMixin):
         dep = 1.2 * self.pile
         fall, sway = self.theme.fall, self.theme.sway
 
+        bounds = [(s.x(), s.width(), s.y() + s.height() + 5) for s in self.screens]
+        land = self._land if self.pile > 0 else None
+        cos, t13 = math.cos, t * 1.3
         for k, f in enumerate(self.flakes):
             y0 = f[1]
-            f[0] += (wind * (0.4 + f[2] / 4) + sway * f[5] * math.cos(t * 1.3 + f[4])) * dt
+            f[0] += (wind * (0.4 + f[2] / 4) + sway * f[5] * cos(t13 + f[4])) * dt
             f[1] += f[3] * fall * dt
-            s = self.screens[f[7]]
-            if f[0] < s.x():
-                f[0] += s.width()
-            elif f[0] >= s.x() + s.width():
-                f[0] -= s.width()
-            if (self.pile > 0 and self._land(f[0], y0, f[1], dep * f[2])) \
-                    or f[1] > s.y() + s.height() + 5:
+            sx, sw, sb = bounds[f[7]]
+            if f[0] < sx:
+                f[0] += sw
+            elif f[0] >= sx + sw:
+                f[0] -= sw
+            if (land is not None and land(f[0], y0, f[1], dep * f[2])) or f[1] > sb:
                 self.flakes[k] = self._new_flake(f[7])
 
         bottom = max(s.y() + s.height() for s in self.screens) + 10
@@ -843,9 +893,18 @@ class Sim(FestiveMixin, FunMixin):
         cur = set()
         add = self._add_tiles
         reach = self.theme.reach
-        for f in self.flakes:
+        put = cur.add
+        for f in self.flakes:            # écrit en ligne : appelé pour chaque flocon à chaque image
             r = f[2] * reach + 1.5
-            add(cur, f[0] - r, f[1] - r, f[0] + r, f[1] + r)
+            tx0, tx1 = int((f[0] - r) // TILE), int((f[0] + r) // TILE)
+            ty0, ty1 = int((f[1] - r) // TILE), int((f[1] + r) // TILE)
+            if tx1 - tx0 > 1 or ty1 - ty0 > 1:
+                add(cur, f[0] - r, f[1] - r, f[0] + r, f[1] + r)
+                continue
+            put((tx0, ty0))
+            put((tx1, ty0))
+            put((tx0, ty1))
+            put((tx1, ty1))
         for c in self.clumps:
             r = c[4] + 1.5
             add(cur, c[0] - r, c[1] - r, c[0] + r, c[1] + r)
@@ -857,7 +916,6 @@ class Sim(FestiveMixin, FunMixin):
             if s is not None:
                 x = s.x + pl["rel"]
                 add(cur, x - 52, s.y - 46, x + 52, s.y + 4)   # camion (2 sens) + gerbe
-                s.path = None
         self._festive_tiles(add, cur)
         self._fun_tiles(add, cur)
         self.tiles |= cur | self._prev_items
@@ -944,8 +1002,6 @@ class Sim(FestiveMixin, FunMixin):
         for c in range(c0, c1):
             pl["load"] += s.heights[c]
             s.heights[c] = 0.0
-        if c1 > c0:
-            s.path = None
 
         bx, by = s.x + pl["rel"], s.y
         on_panel = 0 <= pl["rel"] <= s.w
@@ -1069,7 +1125,105 @@ class Sim(FestiveMixin, FunMixin):
     SNOW = QColor(255, 255, 255, 240)
     SHADOW = QColor(120, 150, 190, 90)
 
-    def paint(self, p, view):
+    @staticmethod
+    def _pile_spans(s, damage):
+        """Colonnes [a, b) du tas qui touchent les tuiles abîmées, marge comprise.
+        damage : {ligne de tuiles: [(x0, x1) globaux]} ou None (tout)."""
+        n = len(s.heights)
+        if damage is None:
+            return ((0, n),)
+        left, right = s.x, s.x + s.w
+        spans = []
+        for ty in range(int((s.y - s.maxh - 3) // TILE), int((s.y + s.radius + 4) // TILE) + 1):
+            for x0, x1 in damage.get(ty, ()):
+                if x1 <= left or x0 >= right:
+                    continue
+                # 2 colonnes de marge : dans la zone clippée, le contour partiel = le contour complet
+                a = max(0, math.floor((x0 - left) / COL) - 2)
+                b = min(n, math.ceil((x1 - left) / COL) + 2)
+                spans.append((a, b))
+        if len(spans) < 2:
+            return spans
+        spans.sort()
+        out = [list(spans[0])]
+        for a, b in spans[1:]:
+            if a <= out[-1][1]:
+                out[-1][1] = max(out[-1][1], b)
+            else:
+                out.append([a, b])
+        return out
+
+    def _paint_pile(self, p, s, a, b):
+        """Rasteriser tout le tas à chaque image coûtait l'essentiel du CPU : seulement [a, b)."""
+        h, m, base, x0, y = s.heights, s.mask, s.base, s.x, s.y
+        path = QPainterPath()
+        i = a
+        while i < b:
+            if not m[i] or h[i] < 0.35:
+                i += 1
+                continue
+            path.moveTo(x0 + i * COL, y + s.drop(i * COL))
+            j = i
+            while j < b and m[j] and h[j] >= 0.35:
+                path.lineTo(x0 + (j + 0.5) * COL, y + base[j] - h[j])
+                j += 1
+            path.lineTo(x0 + j * COL, y + s.drop(j * COL))
+            if s.radius:
+                for k in range(j - 1, i, -1):    # dessous du tas : le long du coin
+                    if base[k] or base[k - 1]:
+                        path.lineTo(x0 + k * COL, y + s.drop(k * COL))
+            path.closeSubpath()
+            i = j
+        if path.isEmpty():
+            return
+        p.fillPath(path.translated(0, 1.5), self.SHADOW)
+        p.fillPath(path, self.SNOW)
+        if self.theme.shape is not None:
+            self._paint_speck(p, s, a, b)
+
+    def _flake_sprite(self, dpr, r, kx, ky):
+        """Flocon pré-rendu, centré à (kx + 0.5, ky + 0.5) / FLAKE_SUB px d'un pixel entier."""
+        key = (dpr, self.theme.clump, r, kx, ky)
+        sp = self._sprites.get(key)
+        if sp is None:
+            half = math.ceil(r * dpr) + 2
+            sp = QImage(2 * half + 1, 2 * half + 1, QImage.Format.Format_ARGB32_Premultiplied)
+            sp.fill(0)
+            q = QPainter(sp)
+            q.setRenderHint(QPainter.RenderHint.Antialiasing)
+            q.setPen(Qt.PenStyle.NoPen)
+            q.setBrush(QColor(*self.theme.clump))
+            q.drawEllipse(QPointF(half + (kx + 0.5) / FLAKE_SUB, half + (ky + 0.5) / FLAKE_SUB),
+                          r * dpr, r * dpr)
+            q.end()
+            sp.setDevicePixelRatio(dpr)
+            self._sprites[key] = sp = (sp, half)
+        return sp
+
+    def _paint_round_flakes(self, p, bounds, factor):
+        """Sprites plutôt que drawEllipse : 2 à 2,5× moins cher, au 1/16 de pixel près."""
+        vl, vt, vr, vb = bounds
+        dpr = p.device().devicePixelRatio()
+        opacity = p.opacity()
+        sprite, floor, last = self._flake_sprite, math.floor, -1
+        for f in self.flakes:
+            x, y = f[0], f[1]
+            if not (vl - 4 <= x <= vr + 4 and vt - 4 <= y <= vb + 4):
+                continue
+            a = int(f[6] * factor(x, y))
+            if a <= 3:
+                continue
+            if a != last:
+                p.setOpacity(opacity * a / 255)
+                last = a
+            dx, dy = (x - vl) * dpr, (y - vt) * dpr
+            ix, iy = floor(dx), floor(dy)
+            img, half = sprite(dpr, f[2], int((dx - ix) * FLAKE_SUB), int((dy - iy) * FLAKE_SUB))
+            p.drawImage(QPointF(vl + (ix - half) / dpr, vt + (iy - half) / dpr), img)
+        p.setOpacity(opacity)
+
+    def paint(self, p, view, damage=None):
+        """damage : tuiles abîmées déjà posées en clip, voir _pile_spans (None = tout)."""
         p.save()
         p.translate(-view.x(), -view.y())
         p.setPen(Qt.PenStyle.NoPen)
@@ -1079,30 +1233,8 @@ class Sim(FestiveMixin, FunMixin):
         for s in self.order:
             if s.x > vr or s.x + s.w < vl or s.y < vt - 1 or s.y > vb + 1:
                 continue
-            if s.path is None:
-                h, m, n = s.heights, s.mask, len(s.heights)
-                path = QPainterPath()
-                i = 0
-                while i < n:
-                    if not m[i] or h[i] < 0.35:
-                        i += 1
-                        continue
-                    path.moveTo(s.x + i * COL, s.y)
-                    j = i
-                    while j < n and m[j] and h[j] >= 0.35:
-                        path.lineTo(s.x + (j + 0.5) * COL, s.y - h[j])
-                        j += 1
-                    path.lineTo(s.x + j * COL, s.y)
-                    path.closeSubpath()
-                    i = j
-                s.path = (path, path.translated(0, 1.5))
-                s.speck = None
-            path, shadow = s.path
-            if not path.isEmpty():
-                p.fillPath(shadow, self.SHADOW)
-                p.fillPath(path, self.SNOW)
-                if self.theme.shape is not None:
-                    self._paint_speck(p, s)
+            for a, b in self._pile_spans(s, damage):
+                self._paint_pile(p, s, a, b)
             if s.ice:
                 self._paint_ice(p, s)
 
@@ -1127,20 +1259,10 @@ class Sim(FestiveMixin, FunMixin):
             return 1.0
 
         col = QColor(*self.theme.clump)
-        last = -1
         if self.theme.shape is not None:
             self._paint_shaped_flakes(p, (vl, vt, vr, vb), factor)
         else:
-            for f in self.flakes:
-                if vl - 4 <= f[0] <= vr + 4 and vt - 4 <= f[1] <= vb + 4:
-                    a = int(f[6] * factor(f[0], f[1]))
-                    if a <= 3:
-                        continue
-                    if a != last:
-                        col.setAlpha(a)
-                        p.setBrush(col)
-                        last = a
-                    p.drawEllipse(QPointF(f[0], f[1]), f[2], f[2])
+            self._paint_round_flakes(p, (vl, vt, vr, vb), factor)
         for c in self.clumps:
             if vl - 4 <= c[0] <= vr + 4 and vt - 4 <= c[1] <= vb + 4:
                 a = int(240 * factor(c[0], c[1]))
