@@ -139,6 +139,26 @@ def make_tray(app, sim, settings, battery_option=False):
     act("⚔  Bataille de boules de neige", fight)
     act("🐱  Neko-chan", cat)
     act("🎆  Feu d'artifice", lambda: sim.start_fireworks())
+    more = menu.addMenu("✨  Encore plus")
+    more.menuAction().setMenuRole(QAction.MenuRole.NoRole)
+
+    def extra(text, fn, busy=None):
+        def run():
+            if not fn() and busy:
+                tray.showMessage("Yuki", busy, tray.icon(), 3000)
+        a = QAction(text, more)
+        a.setMenuRole(QAction.MenuRole.NoRole)
+        a.triggered.connect(run)
+        more.addAction(a)
+
+    extra("🌌  Aurore boréale", sim.start_aurora, "L'aurore danse déjà~")
+    extra("🌠  Étoile filante", sim.start_star)
+    extra("✨  Lucioles", sim.start_fireflies)
+    extra("🌧  Averse", sim.start_rain, "Il pleut déjà !")
+    extra("🧊  Givre", sim.start_frost)
+    extra("🛷  Luge", sim.start_sled, "Pas de fenêtre enneigée assez large pour la luge 🥲")
+    extra("🐦  Oiseau postier", sim.start_bird, "L'oiseau est déjà en tournée~")
+    extra("🏠  Retour d'absence", lambda: sim.welcome_back(1800.0), "On vient déjà de rentrer~")
     menu.addSeparator()
     add_settings_menu(menu, settings, battery_option)
     pause = act("⏸  Pause", lambda: toggle_pause())

@@ -29,6 +29,7 @@ from yuki.core import Sim  # noqa: E402
 from yuki.fun import SEASON_NAMES  # noqa: E402
 from yuki.view import SnowView, tile_rows  # noqa: E402
 
+EXTRAS = ("aurora", "rain", "fireflies", "frost", "sled", "bird")
 SCREENS = [(QRect(0, 0, 2560, 1440), 1.0), (QRect(2560, 0, 1707, 1067), 1.5)]
 WINDOWS = [["dock0", 8, 1392, 2544, 48, 1, 0, 0], ["dock1", 2568, 1019, 1691, 48, 1, 0, 0],
            ["a", 100, 200, 1200, 800, 0, 0, 0], ["b", 900, 120, 1300, 900, 0, 0, 0],
@@ -78,6 +79,8 @@ def main():
     ap.add_argument("--frames", type=int, default=600)
     ap.add_argument("--profile", action="store_true")
     ap.add_argument("--dump", help="préfixe des PNG écrits à la fin")
+    ap.add_argument("--extras", default="",
+                    help="aurora,rain,fireflies,frost,sled,bird (séparés par des virgules) ou all")
     args = ap.parse_args()
 
     app = QGuiApplication(sys.argv)  # noqa: F841
@@ -91,9 +94,19 @@ def main():
     for s in sim.order:                        # neige déjà posée
         s.heights = [s.cap(i) * random.uniform(0.4, 1.0) for i in range(len(s.heights))]
     views = [View(sim, r, d) for r, d in SCREENS]
+    extras = set(EXTRAS if args.extras == "all" else filter(None, args.extras.split(",")))
+    if extras:
+        if "frost" in extras:
+            sim.idle_external = 600.0
+            sim.frost_force = 1e9
+        for name in extras - {"frost"}:
+            getattr(sim, "start_" + name)()
+        for _ in range(40 * 60):           # que tout soit bien installé (givre, aurore pleine)
+            sim.step(1 / 60)
 
     def frame(i):
-        sim.set_cursor(1000 + 300 * (i % 40), 700)
+        if not args.extras:
+            sim.set_cursor(1000 + 300 * (i % 40), 700)
         t0 = time.perf_counter()
         sim.step(1 / 60)
         t1 = time.perf_counter()

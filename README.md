@@ -11,13 +11,20 @@ De la neige sur le bureau KDE Plasma 6, en Wayland comme en X11, sur macOS (voir
 - ⚔️ Des lutins se battent à coups de boules de neige d'une fenêtre à l'autre. Une boule peut décapiter un bonhomme ou s'écraser sur une fenêtre et y glisser.
 - 🖱️ Le curseur écarte les flocons, et balaie la neige s'il passe vite dessus.
 - 🧊 Des glaçons poussent sous les fenêtres enneigées et tombent quand on les secoue.
-- 🐱 Neko-chan se promène en laissant des empreintes, puis dort sur un tas de neige. Si on bouge sa fenêtre, il saute et s'en va.
+- 🐱 Neko-chan se promène en laissant des empreintes, puis dort sur un tas de neige. Si on bouge sa fenêtre, il saute et s'en va. Un curseur qui bouge lentement près de lui devient un jouet : il le suit, se tapit et bondit dessus. Un geste rapide l'effraie.
+- 🛷 Quand on secoue une fenêtre enneigée, un lutin part parfois en luge avec la neige, atterrit plus bas, glisse, puis repart à pied.
+- 🐦 Un oiseau postier apporte une lettre sur chaque notification (KDE ; une tournée toutes les 20 s au plus).
+- 🌌 Les soirs d'hiver, une aurore boréale danse en haut de l'écran derrière les fenêtres, avec des étoiles filantes.
+- 🌧 En automne, des averses passent ; des gouttes glissent sur les fenêtres en laissant des traînées.
+- ✨ Les nuits d'été (de 21 h à 5 h), les lucioles remplacent la neige.
+- 🧊 Quand on ne touche plus à rien, du givre gagne les bords de l'écran, en partant des coins. Le curseur l'efface, et il fond quand on revient. Sur KDE Wayland, macOS et Windows, le clavier compte aussi, et une vidéo en cours l'empêche (KDE).
+- 🏠 Après une longue absence (10 min sans rien toucher, ou une mise en veille), la neige s'est bien entassée et Neko-chan dort dessus.
 - 🌸 Yuki suit les saisons : sakura de mars à mai, feuilles en septembre et octobre, neige le reste de l'année. Les visiteurs d'hiver ne viennent d'eux-mêmes qu'avec la neige.
 - 🎆 Le père Noël passe quatre fois plus souvent les 24 et 25 décembre. Il y a des feux d'artifice le 31 au soir, et un bouquet final de minuit à 0 h 20.
 - Les lutins, les bonshommes et le père Noël restent derrière les fenêtres maximisées. Les flocons y sont masqués ou rendus transparents, au choix.
 - Rien n'est affiché au-dessus des apps en plein écran.
-- Une icône ❄ dans la zone de notification donne accès au chasse-neige, au bonhomme, au père Noël, à la bataille, à Neko-chan, au feu d'artifice, à la pause et à Quitter.
-- Le rendu est partiel : seules les zones qui bougent sont redessinées, environ 10 % de l'écran.
+- Une icône ❄ dans la zone de notification donne accès au chasse-neige, au bonhomme, au père Noël, à la bataille, à Neko-chan, au feu d'artifice, aux nouveautés (sous-menu **Encore plus**), à la pause et à Quitter.
+- Le rendu est partiel : seules les zones qui bougent sont redessinées, environ 10 % de l'écran. Quand rien de rapide ne bouge, Yuki passe à 30 images par seconde (`--fps-calm`).
 
 ## Installation
 
@@ -57,6 +64,7 @@ Tes réglages se trouvent dans la variable `YUKI_ARGS`, au début de `yuki-sync.
 | `--pile` | `1.0` | Vitesse d'accumulation (`0` = la neige ne se pose pas) |
 | `--melt` | `0.003` | Vitesse de fonte de la neige posée |
 | `--fps` | `30` | Images par seconde |
+| `--fps-calm` | `30` | Images par seconde quand rien de rapide ne bouge (`0` = comme `--fps`) |
 | `--over-max` | `0` | Opacité des flocons sur les fenêtres maximisées |
 | `--over-windows` | `1.0` | Opacité des flocons sur les autres fenêtres |
 | `--plow-every` | `10` | Chasse-neige toutes les N minutes (`0` = jamais) |
@@ -64,6 +72,10 @@ Tes réglages se trouvent dans la variable `YUKI_ARGS`, au début de `yuki-sync.
 | `--santa-every` | `12` | Père Noël toutes les N minutes (`0` = jamais) |
 | `--fight-every` | `8` | Bataille de boules de neige toutes les N minutes (`0` = jamais) |
 | `--cat-every` | `9` | Visite de Neko-chan toutes les N minutes (`0` = jamais) |
+| `--aurora-every` | `20` | Aurore boréale toutes les N minutes, les soirs d'hiver (`0` = jamais) |
+| `--rain-every` | `12` | Averse toutes les N minutes en automne (`0` = jamais) |
+| `--frost-after` | `2` | Givre après N minutes sans rien toucher (`0` = jamais) |
+| `--bird` | `1` | Oiseau facteur sur les notifications (`0` = jamais) |
 | `--cursor` | `1.0` | Force du souffle du curseur (`0` = aucun) |
 | `--season` | `auto` | `auto`, `hiver`, `printemps` ou `automne` |
 | `--panel-gap` | `8` | KDE : écart du panneau flottant en px (`0` si le panneau ne flotte pas) |
@@ -73,7 +85,7 @@ Tes réglages se trouvent dans la variable `YUKI_ARGS`, au début de `yuki-sync.
 
 ### Réglages depuis le menu ❄
 
-Le sous-menu **Réglages** change la neige, le vent, l'accumulation, la fonte, l'opacité des flocons, la fréquence des passages, le souffle du curseur, la saison et les images par seconde, sans relancer Yuki.
+Le sous-menu **Réglages** change la neige, le vent, l'accumulation, la fonte, l'opacité des flocons, la fréquence des passages, les aurores, les averses, le givre, l'oiseau postier, le souffle du curseur, la saison et les images par seconde (en action et au calme), sans relancer Yuki.
 
 Ces choix sont conservés au redémarrage et **ont priorité sur les options de lancement**, y compris `YUKI_ARGS`. L'entrée « Revenir aux réglages de lancement » les efface. Sur macOS et Windows, la case « Neiger sur batterie » remplace `--on-battery` de la même façon. `--panel-gap` reste une option de lancement.
 
@@ -86,6 +98,14 @@ busctl --user call org.roland.Yuki /Yuki org.roland.Yuki santa     # père Noël
 busctl --user call org.roland.Yuki /Yuki org.roland.Yuki fight     # bataille
 busctl --user call org.roland.Yuki /Yuki org.roland.Yuki cat       # Neko-chan
 busctl --user call org.roland.Yuki /Yuki org.roland.Yuki fireworks # feu d'artifice
+busctl --user call org.roland.Yuki /Yuki org.roland.Yuki aurora    # aurore boréale
+busctl --user call org.roland.Yuki /Yuki org.roland.Yuki star      # étoile filante
+busctl --user call org.roland.Yuki /Yuki org.roland.Yuki fireflies # lucioles
+busctl --user call org.roland.Yuki /Yuki org.roland.Yuki rain      # averse
+busctl --user call org.roland.Yuki /Yuki org.roland.Yuki frost     # givre
+busctl --user call org.roland.Yuki /Yuki org.roland.Yuki sled      # luge
+busctl --user call org.roland.Yuki /Yuki org.roland.Yuki bird      # oiseau postier
+busctl --user call org.roland.Yuki /Yuki org.roland.Yuki welcome   # retour d'absence
 ```
 
 ### Seulement quand le PC est branché

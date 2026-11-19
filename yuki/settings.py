@@ -32,18 +32,30 @@ PARAMS = (
           (("Jamais", 0.0), ("4 min", 4.0), ("8 min", 8.0), ("15 min", 15.0), ("30 min", 30.0))),
     Param("cat_every", "🐱  Visite de Neko-chan", 0.0, None,
           (("Jamais", 0.0), ("5 min", 5.0), ("9 min", 9.0), ("20 min", 20.0), ("45 min", 45.0))),
+    Param("aurora_every", "🌌  Aurores boréales (soirs d'hiver)", 0.0, None,
+          (("Jamais", 0.0), ("10 min", 10.0), ("20 min", 20.0), ("45 min", 45.0))),
+    Param("rain_every", "🌧  Averses (automne)", 0.0, None,
+          (("Jamais", 0.0), ("6 min", 6.0), ("12 min", 12.0), ("25 min", 25.0))),
+    Param("frost_after", "🧊  Givre quand tu t'absentes", 0.0, None,
+          (("Jamais", 0.0), ("Après 1 min", 1.0), ("Après 2 min", 2.0), ("Après 5 min", 5.0))),
+    Param("bird", "🐦  Oiseau postier (notifications)", 0.0, 1.0,
+          (("Jamais", 0.0), ("Oui", 1.0))),
     Param("cursor", "🖱  Souffle du curseur", 0.0, None,
           (("Aucun", 0.0), ("Doux", 0.5), ("Normal", 1.0), ("Fort", 2.0))),
     Param("season", "🌸  Saison", 0.0, 3.0,
           (("Selon la date", 0.0), ("Hiver", 1.0), ("Printemps", 2.0), ("Automne", 3.0))),
     Param("fps", "🎞  Images par seconde", 1.0, None,
           (("15", 15.0), ("30", 30.0), ("60", 60.0), ("120", 120.0))),
+    Param("fps_calm", "🎞  Images par seconde au calme", 0.0, None,
+          (("Comme en action", 0.0), ("15", 15.0), ("30", 30.0))),
 )
 BY_KEY = {p.key: p for p in PARAMS}
 SIM_ATTRS = {"wind": "wind", "pile": "pile", "melt": "melt", "over_windows": "over_win",
              "over_max": "over_max", "plow_every": "plow_every",
              "elves_every": "elves_every", "santa_every": "santa_every",
-             "fight_every": "fight_every", "cat_every": "cat_every", "cursor": "cursor_force"}
+             "fight_every": "fight_every", "cat_every": "cat_every", "cursor": "cursor_force",
+             "aurora_every": "aurora_every", "rain_every": "rain_every", "frost_after": "frost_after",
+             "bird": "bird_on"}
 
 
 def same_value(a, b):
@@ -58,7 +70,7 @@ def clean(param, value):
         value = max(param.low, value)
     if param.high is not None:
         value = min(param.high, value)
-    return float(round(value)) if param.key in ("fps", "season") else value
+    return float(round(value)) if param.key in ("fps", "fps_calm", "season") else value
 
 
 class Settings:
@@ -94,6 +106,12 @@ class Settings:
     @property
     def frame_ms(self):
         return max(5, int(1000 / self.values["fps"]))
+
+    @property
+    def calm_ms(self):
+        """Quand rien de rapide ne bouge : KWin paie chaque image, même pour de la neige qui tombe."""
+        calm = self.values["fps_calm"]
+        return self.frame_ms if calm <= 0 else max(self.frame_ms, int(1000 / calm))
 
     def attach(self, sim):
         self.sim = sim

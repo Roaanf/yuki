@@ -206,6 +206,15 @@ class MacBackend(BatteryPauseMixin):
         self.power_proc = QProcess()
         self.power_proc.finished.connect(self._power_read)
 
+    def idle_seconds(self):
+        """Secondes depuis la dernière saisie (clavier ou souris), None si inconnu."""
+        q = self.Quartz
+        try:
+            return float(q.CGEventSourceSecondsSinceLastEventType(
+                q.kCGEventSourceStateCombinedSessionState, getattr(q, "kCGAnyInputEventType", 0xFFFFFFFF)))
+        except (AttributeError, TypeError, ValueError):
+            return None
+
     def screen_rects(self):
         return [s.geometry() for s in self.app.screens()]
 

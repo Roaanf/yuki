@@ -32,6 +32,9 @@ MAX_SPARKS = 900
 FIREWORK_COLORS = ((255, 90, 110), (255, 205, 90), (120, 200, 255), (150, 240, 160), (240, 140, 255))
 ICE_EVERY = 2.0
 CAT_SPEED = 42.0
+PLAY_RADIUS = 170.0         # le curseur lent à moins de ça devient un jouet
+PLAY_SPEED = 400.0
+POUNCE_T = 0.45
 CAT_COATS = (((240, 165, 90), (190, 110, 55)), ((120, 125, 140), (75, 78, 92)),
              ((250, 240, 225), (205, 180, 150)), ((60, 58, 68), (30, 28, 36)))
 
@@ -128,6 +131,7 @@ class FunMixin:
 
     def _check_calendar(self):
         now = self.clock()
+        self._sky_calendar(now)
         self.xmas = now.month == 12 and now.day in (24, 25)
         season = self.season_choice or season_for(now)
         if season != self.season:
@@ -628,7 +632,8 @@ class FunMixin:
             i = j
         return best[0] * COL, best[1] * COL
 
-    def start_cat(self):
+    def start_cat(self, asleep=False):
+        """asleep : déjà endormi sur le tas le plus épais (retour d'absence)."""
         if self.cat is not None:
             return False
         self.cat_timer = 0.0
@@ -655,6 +660,9 @@ class FunMixin:
                     "leaving": False, "t": 0.0, "fur": fur, "dark": dark, "sleep": 0.0,
                     "lo": lo, "hi": hi, "sx": s.x, "sy": s.y, "step": 0.0, "side": 0,
                     "x": s.x + rel, "y": s.y, "vx": 0.0, "vy": 0.0, "from": None}
+        if asleep:
+            self.cat.update(rel=target, state="sleep", sleep=random.uniform(90, 200), sx=s.x, sy=s.y,
+                            x=s.x + target, y=s.y - self._pile_at(s, target) * 0.6)
         return True
 
     def _cat_leave(self, c, s):
@@ -702,19 +710,27 @@ class FunMixin:
         if c["state"] == "sleep":
             c["x"], c["y"] = s.x + c["rel"], s.y - self._pile_at(s, c["rel"]) * 0.6
             c["sleep"] -= dt
+            c["tease"] = c.get("tease", 0.0) + dt if self._cat_sees_cursor(c, s, 50) else 0.0
             if self._cat_startled(c, s):
                 self._cat_jump(c)
+            elif c["tease"] > 1.5:             # on l'a taquiné assez longtemps : il se réveille
+                self._cat_play(c, s)
             elif c["sleep"] <= 0:
                 self._cat_leave(c, s)
             return
+        if c["state"] == "play":
+            if self._cat_startled(c, s):
+                self._cat_jump(c)
+            else:
+                self._step_cat_play(c, s, dt)
+            return
+        if not c["leaving"] and self._cat_sees_cursor(c, s):
+            self._cat_play(c, s)
+            return
         step = CAT_SPEED * (1.5 if c["leaving"] else 1.0) * dt
         c["rel"] += c["dir"] * step
-        c["step"] += step
         c["x"], c["y"] = s.x + c["rel"], s.y - self._pile_at(s, c["rel"]) * 0.6
-        if c["step"] >= 13:
-            c["step"] = 0.0
-            c["side"] = 1 - c["side"]
-            self._add_print(s, c["rel"], c["side"])
+        self._cat_prints(c, s, step)
         if c["dir"] * (c["rel"] - c["target"]) >= 0:
             if c["leaving"]:
                 self.cat = None
@@ -722,6 +738,65 @@ class FunMixin:
                 c["state"] = "sleep"
                 c["sleep"] = random.uniform(150, 360)
                 c["sx"], c["sy"] = s.x, s.y
+
+    def _cat_prints(self, c, s, step):
+        c["step"] += step
+        if c["step"] >= 13:
+            c["step"] = 0.0
+            c["side"] = 1 - c["side"]
+            self._add_print(s, c["rel"], c["side"])
+
+    def _cat_sees_cursor(self, c, s, reach=PLAY_RADIUS):
+        if self.cursor is None or self.cursor_speed >= PLAY_SPEED:
+            return False
+        x, y = self.cursor
+        return (abs(x - c["x"]) < reach and s.y - 90 <= y <= s.y + 12
+                and c["lo"] - 10 <= x - s.x <= c["hi"] + 10)
+
+    def _cat_play(self, c, s):
+        c.update(state="play", play=0.0, bored=0.0, hop=None, cool=0.0, crouch=0.0, lift=0.0,
+                 moving=False, sx=s.x, sy=s.y, tease=0.0)
+
+    def _step_cat_play(self, c, s, dt):
+        """Suit le curseur, se tapit, puis bondit dessus."""
+        c["play"] += dt
+        sees = self._cat_sees_cursor(c, s, PLAY_RADIUS + 60)
+        c["bored"] = 0.0 if sees else c["bored"] + dt
+        c["moving"] = False
+        if c["hop"] is None and (c["bored"] > 2.5 or c["play"] > 45):
+            c["crouch"] = 0.0
+            self._cat_leave(c, s)
+            return
+        lo, hi = c["lo"] + 4, c["hi"] - 4
+        hop = c["hop"]
+        if hop is not None:
+            hop["t"] += dt
+            k = min(1.0, hop["t"] / POUNCE_T)
+            c["rel"] = hop["from"] + (hop["to"] - hop["from"]) * k
+            c["lift"] = 16 * math.sin(math.pi * k)
+            if k >= 1:
+                c["hop"], c["lift"], c["cool"] = None, 0.0, 1.0
+                if self._pile_at(s, c["rel"]) > 1:
+                    self._splat(s.x + c["rel"], s.y - 3, 3)
+        elif c["cool"] > 0:
+            c["cool"] -= dt
+        elif sees:
+            target = max(lo, min(hi, self.cursor[0] - s.x))
+            dx = target - c["rel"]
+            if abs(dx) > 18:
+                c["crouch"] = 0.0
+                c["dir"] = 1 if dx > 0 else -1
+                step = min(abs(dx) - 17, CAT_SPEED * 2.2 * dt)
+                c["rel"] += c["dir"] * step
+                c["moving"] = True
+                self._cat_prints(c, s, step)
+            elif self.cursor_speed < 80:
+                c["crouch"] += dt
+                if c["crouch"] > 0.45:
+                    c["crouch"] = 0.0
+                    c["dir"] = 1 if dx >= 0 else -1
+                    c["hop"] = {"t": 0.0, "from": c["rel"], "to": target}
+        c["x"], c["y"] = s.x + c["rel"], s.y - self._pile_at(s, c["rel"]) * 0.6
 
     def _step_cat_jump(self, c, dt):
         y0 = c["y"]
@@ -940,9 +1015,13 @@ class FunMixin:
         if s is not None and c["state"] == "walk":     # apparaît depuis le bord de sa surface
             edge = min(c["rel"] - c["lo"] + 24, c["hi"] + 24 - c["rel"])
             p.setOpacity(p.opacity() * max(0.0, min(1.0, edge / 24)))
-        p.translate(c["x"], c["y"])
+        p.translate(c["x"], c["y"] - c.get("lift", 0.0))
         if c["dir"] < 0:
             p.scale(-1, 1)
+        if c.get("crouch"):                              # tapi, il remue le derrière avant de bondir
+            k = min(1.0, c["crouch"] / 0.45)
+            p.rotate(math.sin(c["t"] * 25) * 2 * k)
+            p.scale(1, 1 - 0.14 * k)
         if c["state"] == "sleep":
             self._paint_cat_asleep(p, c)
         else:
@@ -962,7 +1041,8 @@ class FunMixin:
     def _paint_cat_up(self, p, c):
         fur, dark = QColor(*c["fur"]), QColor(*c["dark"])
         t = c["t"]
-        jumping = c["state"] == "jump"
+        jumping = c["state"] == "jump" or c.get("hop") is not None
+        moving = c["state"] != "play" or c.get("moving")
         tail = QPainterPath()
         tail.moveTo(-10, -9)
         tail.quadTo(-17, -13, -15 + 2 * math.sin(t * 3), -21)
@@ -975,7 +1055,7 @@ class FunMixin:
         p.setBrush(dark)
         phase = t * 9
         for lx, ph in ((-8, 0.0), (-5, 2.6), (4, 1.3), (7, 3.9)):
-            swing = 0.9 if jumping else math.sin(phase + ph) * 0.5
+            swing = 0.9 if jumping else math.sin(phase + ph) * 0.5 if moving else 0.0
             p.save()
             p.translate(lx, -5)
             p.rotate(math.degrees(swing if lx > 0 else -swing if jumping else swing))

@@ -155,7 +155,14 @@ function connectWs(name, fn) {
 
 var initial = workspace.windowList();
 for (var i = 0; i < initial.length; i++) hook(initial[i]);
-connectWs("windowAdded", function (w) { hook(w); push(); });
+// Notification : l'oiseau postier y apporte une lettre (pas de neige dessus, elle ne dure pas).
+function notify(w) {
+    if (!w || !(w.notification || w.criticalNotification)) return;
+    var g = w.frameGeometry;
+    callDBus("org.roland.Yuki", "/Yuki", "org.roland.Yuki", "notified",
+             Math.round(g.x) + " " + Math.round(g.y) + " " + Math.round(g.width) + " " + Math.round(g.height));
+}
+connectWs("windowAdded", function (w) { hook(w); notify(w); push(); });
 connectWs("windowRemoved", function (w) { if (w) removed[String(w.internalId)] = true; push(); });
 connectWs("windowActivated", push);
 connectWs("currentDesktopChanged", push);
@@ -244,6 +251,55 @@ class BusObject(QObject):
         """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki fireworks"""
         return self.sim.start_fireworks()
 
+    @pyqtSlot(result=bool)
+    def aurora(self):
+        """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki aurora"""
+        return self.sim.start_aurora()
+
+    @pyqtSlot(result=bool)
+    def star(self):
+        """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki star"""
+        return self.sim.start_star()
+
+    @pyqtSlot(result=bool)
+    def fireflies(self):
+        """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki fireflies"""
+        return self.sim.start_fireflies()
+
+    @pyqtSlot(result=bool)
+    def rain(self):
+        """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki rain"""
+        return self.sim.start_rain()
+
+    @pyqtSlot(result=bool)
+    def frost(self):
+        """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki frost"""
+        return self.sim.start_frost()
+
+    @pyqtSlot(result=bool)
+    def sled(self):
+        """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki sled"""
+        return self.sim.start_sled()
+
+    @pyqtSlot(result=bool)
+    def bird(self):
+        """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki bird"""
+        return self.sim.start_bird()
+
+    @pyqtSlot(result=bool)
+    def welcome(self):
+        """busctl --user call org.roland.Yuki /Yuki org.roland.Yuki welcome"""
+        return self.sim.welcome_back(1800.0)
+
+    @pyqtSlot(str)
+    def notified(self, geometry):
+        """Envoyé par le script KWin quand une notification s'affiche : « x y largeur hauteur »."""
+        try:
+            x, y, w, h = (float(v) for v in geometry.split())
+        except ValueError:
+            return
+        self.sim.notified(x, y, w, h)
+
     @pyqtSlot(str)
     def cursor(self, position):
         try:
@@ -313,6 +369,13 @@ class KdeBackend:
         if not self.bus.registerService(SERVICE):
             sys.exit("yuki: déjà lancé ? (" + SERVICE + " est pris)")
         self.lib = load_layer_shell() if app.platformName() == "wayland" else None
+        self.idle = None
+        if app.platformName() == "wayland":
+            try:
+                from .wl_idle import WaylandIdle
+                self.idle = WaylandIdle()
+            except (OSError, AttributeError) as e:
+                print("yuki: inactivité clavier inconnue (%s), on suit le curseur" % e, file=sys.stderr)
         if not self.lib:
             print("yuki: layer-shell indisponible, mode fenêtre « au-dessus »", file=sys.stderr)
 
@@ -341,6 +404,9 @@ class KdeBackend:
     def view_shown(self, view):
         pass
 
+    def idle_seconds(self):
+        return None if self.idle is None else self.idle.seconds()
+
     def start(self, sim, set_paused):
         args = self.args
         vg = self.app.primaryScreen().virtualGeometry() if self.lib else self.screen_rects()[0]
@@ -361,6 +427,8 @@ class KdeBackend:
 
     def stop(self):
         unload_kwin_script(self.bus)
+        if self.idle is not None:
+            self.idle.close()
         try:
             os.unlink(self.script_path)
         except (OSError, TypeError):

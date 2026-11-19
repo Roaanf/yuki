@@ -8,9 +8,11 @@ import time
 from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QRegion
 
-from .fun import AUTO, FunMixin
-from .shared import (COL, GRAVITY, ICE_MAX, MAX_CLUMPS, MAX_GROUND, MAX_PILE, SHED_SPEED, TILE,
-                     ease as _ease)
+from .fun import AUTO, BLOW_MIN_SPEED, FunMixin
+from .shared import (COL, GRAVITY, ICE_MAX, LAND_BAND, MAX_CLUMPS, MAX_GROUND, MAX_PILE, SHED_SPEED,
+                     TILE, ease as _ease)
+from .sky import SkyMixin
+from .visitors import AWAY_PILE, VisitorsMixin
 
 
 # --------------------------------------------------------------------------
@@ -85,7 +87,6 @@ class Surface:
 # posées au-dessus de leur bord) : on ne les dessine que là où on les verrait.
 # --------------------------------------------------------------------------
 BUILD_END = 16.5        # durée d'une construction de bonhomme (s)
-LAND_BAND = 16          # hauteur des tranches de l'index des surfaces (px)
 FLAKE_SUB = 8           # positions sous-pixel des sprites de flocons, par axe
 MAX_SNOWMEN = 5
 SNOWMAN_LIFE = 20 * 60  # un bonhomme fond au bout de 20 min
@@ -578,7 +579,7 @@ class FestiveMixin:
         p.setPen(Qt.PenStyle.NoPen)
 
 
-class Sim(FestiveMixin, FunMixin):
+class Sim(FestiveMixin, FunMixin, SkyMixin, VisitorsMixin):
     def __init__(self, screens, density=1.0, wind=15.0, pile=1.0, melt=0.003):
         self.screens = [QRectF(r) for r in screens]
         self.wind = wind
@@ -599,6 +600,8 @@ class Sim(FestiveMixin, FunMixin):
         self.puffs = []           # fumée du pot d'échappement [x, y, vx, vy, age, r]
         self._festive_init()
         self._fun_init()
+        self._sky_init()
+        self._visitors_init()
         self.surfaces = {}
         self.dormant = {}
         self.order = []            # du bas vers le haut
@@ -633,6 +636,7 @@ class Sim(FestiveMixin, FunMixin):
         for i, s in enumerate(self.screens):
             for _ in range(self._flake_count(s)):
                 self.flakes.append(self._new_flake(i, initial=True))
+        self._sky_screens()
         self.masks_dirty = True
         self.full = True
 
@@ -741,9 +745,11 @@ class Sim(FestiveMixin, FunMixin):
             self.surfaces[g.sid] = g
         self.order = self.grounds + new_order
         self.masks_dirty = True
+        self._sky_windows_changed()
 
     def _shed(self, s, frac, vx, vy):
         self._touch(s)
+        self._visitor_shed(s, frac, vx, vy)
         if frac >= 0.5 and getattr(self, "snowmen", None):
             for m in [m for m in self.snowmen if m["sid"] == s.sid]:
                 self._burst_snowman(m, s)
@@ -836,13 +842,13 @@ class Sim(FestiveMixin, FunMixin):
         self.time += dt
         t = self.time
         wind = self.wind * (0.6 + 0.4 * math.sin(t * 0.13)) + 10 * math.sin(t * 0.37)
-        dep = 1.2 * self.pile
+        dep = 1.2 * self.pile * self.snow_level * (AWAY_PILE if self.away else 1.0)
         fall, sway = self.theme.fall, self.theme.sway
 
         bounds = [(s.x(), s.width(), s.y() + s.height() + 5) for s in self.screens]
         land = self._land if self.pile > 0 else None
         cos, t13 = math.cos, t * 1.3
-        for k, f in enumerate(self.flakes):
+        for k, f in enumerate(self.flakes if self.snow_level > 0 else ()):
             y0 = f[1]
             f[0] += (wind * (0.4 + f[2] / 4) + sway * f[5] * cos(t13 + f[4])) * dt
             f[1] += f[3] * fall * dt
@@ -870,6 +876,8 @@ class Sim(FestiveMixin, FunMixin):
         self._step_plow(dt)
         self._step_festive(dt)
         self._step_fun(dt)
+        self._step_sky(dt)
+        self._step_visitors(dt)
         self._collect_item_tiles()
 
         self.smooth_acc += dt
@@ -894,7 +902,7 @@ class Sim(FestiveMixin, FunMixin):
         add = self._add_tiles
         reach = self.theme.reach
         put = cur.add
-        for f in self.flakes:            # écrit en ligne : appelé pour chaque flocon à chaque image
+        for f in self.flakes if self.snow_level > 0 else ():   # en ligne : chaque flocon, chaque image
             r = f[2] * reach + 1.5
             tx0, tx1 = int((f[0] - r) // TILE), int((f[0] + r) // TILE)
             ty0, ty1 = int((f[1] - r) // TILE), int((f[1] + r) // TILE)
@@ -918,8 +926,20 @@ class Sim(FestiveMixin, FunMixin):
                 add(cur, x - 52, s.y - 46, x + 52, s.y + 4)   # camion (2 sens) + gerbe
         self._festive_tiles(add, cur)
         self._fun_tiles(add, cur)
+        self._sky_tiles(add, cur)
+        self._visitor_tiles(add, cur)
         self.tiles |= cur | self._prev_items
         self._prev_items = cur
+
+    def lively(self):
+        """Quelque chose de rapide à l'écran : l'animation mérite toutes ses images par seconde."""
+        c = self.cat
+        return bool(self.plows or self.santa or self.fight or self.balls or self.clumps or self.puffs
+                    or self.sparkles or self.rockets or self.rocket_queue or self.fw_sparks
+                    or self.falling_gifts or self.shards or self.cursor_speed >= BLOW_MIN_SPEED
+                    or any(m["age"] < BUILD_END or m["melt"] is not None for m in self.snowmen)
+                    or (c is not None and c["state"] in ("jump", "play"))
+                    or self._sky_lively() or self._visitors_lively())
 
     def take_damage(self):
         """Rend (plein écran ?, tuiles) puis remet à zéro pour l'image suivante."""
@@ -980,7 +1000,7 @@ class Sim(FestiveMixin, FunMixin):
                 keep.append(f)
         self.puffs = keep
 
-        if not self.plows and self.plow_every > 0:
+        if not self.plows and self.plow_every > 0 and not self.away:   # on garde la neige pour le retour
             self.plow_timer += dt
             if self.plow_timer >= self.plow_every * 60:
                 self.start_plow(only_snowy=True)
@@ -1136,7 +1156,7 @@ class Sim(FestiveMixin, FunMixin):
         spans = []
         for ty in range(int((s.y - s.maxh - 3) // TILE), int((s.y + s.radius + 4) // TILE) + 1):
             for x0, x1 in damage.get(ty, ()):
-                if x1 <= left or x0 >= right:
+                if x1 <= left - 4 or x0 >= right + 4:   # les feuilles du tas débordent un peu
                     continue
                 # 2 colonnes de marge : dans la zone clippée, le contour partiel = le contour complet
                 a = max(0, math.floor((x0 - left) / COL) - 2)
@@ -1230,6 +1250,11 @@ class Sim(FestiveMixin, FunMixin):
         vl, vt = view.x(), view.y()
         vr, vb = vl + view.width(), vt + view.height()
 
+        if self.aurora_level > 0 or self.stars:       # dans le ciel, derrière toutes les fenêtres
+            desktop = self._desktop_region(view)
+            self._paint_aurora(p, view, desktop)
+            self._paint_stars(p, desktop)
+        self._paint_drops(p, view)
         for s in self.order:
             if s.x > vr or s.x + s.w < vl or s.y < vt - 1 or s.y > vb + 1:
                 continue
@@ -1240,9 +1265,11 @@ class Sim(FestiveMixin, FunMixin):
 
         self._paint_festive_ground(p, view)
         self._paint_fun_ground(p, view)
+        self._paint_sled(p, view)
         self._paint_plow(p)
         self._paint_festive_sky(p, view)
         self._paint_fun_sky(p, view)
+        self._paint_bird(p)
 
         def inside(rects):
             return [r for r in rects if r[0] < vr and r[2] > vl and r[1] < vb and r[3] > vt]
@@ -1259,10 +1286,17 @@ class Sim(FestiveMixin, FunMixin):
             return 1.0
 
         col = QColor(*self.theme.clump)
-        if self.theme.shape is not None:
-            self._paint_shaped_flakes(p, (vl, vt, vr, vb), factor)
+        bounds = (vl, vt, vr, vb)
+        level = self.snow_level
+        flake_factor = factor if level >= 1 else (lambda x, y: factor(x, y) * level)
+        if level <= 0:
+            pass
+        elif self.theme.shape is not None:
+            self._paint_shaped_flakes(p, bounds, flake_factor)
         else:
-            self._paint_round_flakes(p, (vl, vt, vr, vb), factor)
+            self._paint_round_flakes(p, bounds, flake_factor)
+        self._paint_rain(p, bounds, factor)
+        self._paint_fireflies(p, bounds, factor)
         for c in self.clumps:
             if vl - 4 <= c[0] <= vr + 4 and vt - 4 <= c[1] <= vb + 4:
                 a = int(240 * factor(c[0], c[1]))
@@ -1271,6 +1305,7 @@ class Sim(FestiveMixin, FunMixin):
                 col.setAlpha(a)
                 p.setBrush(col)
                 p.drawEllipse(QPointF(c[0], c[1]), c[4], c[4])
+        self._paint_frost(p, view)                 # sur la vitre : par-dessus tout
         p.restore()
 
 

@@ -7,7 +7,7 @@ description: Mesurer et optimiser le coût CPU de Yuki (simulation, rendu Qt, et
 
 ## Mesurer
 
-- Banc headless, sans toucher à la session : `python3 tools/bench.py [--season printemps] [--profile] [--dump /chemin/prefixe]`.
+- Banc headless, sans toucher à la session : `python3 tools/bench.py [--season printemps] [--profile] [--dump /chemin/prefixe] [--extras rain,aurora,…|all]`.
   Il reproduit les deux écrans de Roland (2560x1440 à 100 %, 1707x1067 à 150 %) et le rendu partiel de `SnowView`.
   `--dump` écrit les images finales : comparer deux versions en **prémultiplié**
   (en ARGB non prémultiplié, un pixel d'alpha 1 contre 0 donne un faux écart de 255).
@@ -27,7 +27,11 @@ description: Mesurer et optimiser le coût CPU de Yuki (simulation, rendu Qt, et
 - KWin paie surtout **par rectangle** abîmé, pas par pixel : TILE=16 a fait monter KWin de 32 à 44 % malgré 2,7x moins de pixels.
   TILE=48/64 : KWin à peine moins cher, Yuki plus cher. Garder 32.
   Les ~220 rectangles par vue sont surtout des flocons isolés : impossible de les fusionner sans gaspiller beaucoup de surface.
-- Yuki induit environ 20 à 25 points de CPU dans KWin, qui varient avec le nombre d'images par seconde.
+- Yuki induit environ 20 à 25 points de CPU dans KWin, qui varient avec le nombre d'images par seconde. D'où `Sim.lively()` + `--fps-calm` :
+  on ne garde toutes les images par seconde que si quelque chose de rapide bouge. N'y ajouter que ce qui saccade vraiment à 30 images/s.
+- Ce que coûtent les nouveautés (banc, density 1) : aurore +1,1 ms, givre +1,3, lucioles +0,8, luge et oiseau ~0, averse +4,5
+  (les éclaboussures font redessiner les tas : d'où leur plafond, et la pluie volontairement absente de `lively()`).
+- Grand et lent (aurore, givre) : pré-rendre dans une QImage en cache, la recopier clippée. La rasteriser à chaque image coûterait cher, même clippée.
 - Ce qui reste dans Yuki, c'est surtout l'interpréteur Python (boucles par flocon dans `step`, `_collect_item_tiles`, `_paint_round_flakes`).
   Prochain levier : vectoriser les flocons avec numpy (nouvelle dépendance sur les trois plateformes, à décider avec Roland).
 - Un rendu GPU (QOpenGLWindow) annoncerait toute la surface comme abîmée à chaque image : KWin recomposerait les deux écrans en entier.

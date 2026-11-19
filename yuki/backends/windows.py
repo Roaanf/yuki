@@ -176,6 +176,10 @@ class PowerStatus(ctypes.Structure):
                 ("BatteryLifeTime", ctypes.c_uint32), ("BatteryFullLifeTime", ctypes.c_uint32)]
 
 
+class LastInputInfo(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+
 def rect_tuple(r):
     return (r.left, r.top, r.right - r.left, r.bottom - r.top)
 
@@ -300,6 +304,20 @@ class Win32:
             return None
         return {0: True, 1: False}.get(status.ACLineStatus)
 
+    def idle_seconds(self):
+        """Secondes depuis la dernière saisie (clavier ou souris), None si inconnu."""
+        try:
+            get, tick = self.user32.GetLastInputInfo, self.kernel32.GetTickCount
+            get.argtypes, get.restype = [ctypes.POINTER(LastInputInfo)], wintypes.BOOL
+            tick.argtypes, tick.restype = [], wintypes.DWORD
+        except AttributeError:
+            return None
+        info = LastInputInfo()
+        info.cbSize = ctypes.sizeof(info)
+        if not get(ctypes.byref(info)):
+            return None
+        return ((tick() - info.dwTime) & 0xFFFFFFFF) / 1000.0    # GetTickCount reboucle après 49 jours
+
     def start_hooks(self, notify):
         def event(_hook, code, hwnd, id_object, id_child, _thread, _time):
             if id_object != OBJID_WINDOW or id_child != 0:
@@ -354,6 +372,9 @@ class WindowsBackend(BatteryPauseMixin):
         self.safety_timer.setInterval(SAFETY_POLL_MS)
         self.safety_timer.timeout.connect(self.safety_poll)
         self._init_power(args)
+
+    def idle_seconds(self):
+        return self.api.idle_seconds()
 
     def screen_rects(self):
         return [s.geometry() for s in self.app.screens()]

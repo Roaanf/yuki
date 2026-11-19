@@ -15,6 +15,8 @@ from .tray import make_tray
 from .view import tile_rows
 
 PAUSED_TICK_MS = 200   # en pause, inutile de réveiller le processus à chaque image
+CALM_AFTER = 0.5       # s sans rien de rapide avant de passer aux images par seconde « au calme »
+SLEPT_AFTER = 60.0     # s entre deux images : l'ordinateur était en veille
 
 
 def load_backend():
@@ -42,6 +44,8 @@ def parse_args(backend):
     ap.add_argument("--pile", type=float, default=1.0, help="vitesse d'accumulation (1.0, 0 = pas d'accumulation)")
     ap.add_argument("--melt", type=float, default=0.003, help="fonte par seconde (0.003)")
     ap.add_argument("--fps", type=int, default=30)
+    ap.add_argument("--fps-calm", type=int, default=30,
+                    help="images par seconde quand rien de rapide ne bouge (30 ; 0 = comme --fps)")
     ap.add_argument("--over-max", type=float, default=0.0,
                     help="opacité des flocons sur une fenêtre maximisée (0 = cachés, 1 = normal)")
     ap.add_argument("--over-windows", type=float, default=1.0,
@@ -56,6 +60,14 @@ def parse_args(backend):
                     help="bataille de boules de neige toutes les N minutes (8 ; 0 = jamais)")
     ap.add_argument("--cat-every", type=float, default=9.0,
                     help="Neko-chan passe toutes les N minutes (9 ; 0 = jamais)")
+    ap.add_argument("--aurora-every", type=float, default=20.0,
+                    help="aurore boréale toutes les N minutes, les soirs d'hiver (20 ; 0 = jamais)")
+    ap.add_argument("--rain-every", type=float, default=12.0,
+                    help="averse toutes les N minutes en automne (12 ; 0 = jamais)")
+    ap.add_argument("--frost-after", type=float, default=2.0,
+                    help="givre sur les bords après N minutes sans rien toucher (2 ; 0 = jamais)")
+    ap.add_argument("--bird", type=float, default=1.0,
+                    help="oiseau postier sur les notifications (1 ; 0 = jamais)")
     ap.add_argument("--cursor", type=float, default=1.0,
                     help="force du souffle du curseur (1.0 ; 0 = aucun)")
     ap.add_argument("--season", type=season_value, default=0.0,
@@ -144,21 +156,31 @@ def main():
     clock = QElapsedTimer()
     clock.start()
     timer = QTimer()
+    calm = [0.0]
+    idle_seconds = getattr(backend, "idle_seconds", lambda: None)
 
     def tick():
-        wanted = PAUSED_TICK_MS if sim.user_paused else settings.frame_ms
+        if sim.user_paused:
+            wanted = PAUSED_TICK_MS
+        else:
+            wanted = settings.frame_ms if calm[0] < CALM_AFTER else settings.calm_ms
         if timer.interval() != wanted:
             timer.setInterval(wanted)
-        dt = min(clock.restart() / 1000.0, 0.1)
+        elapsed = clock.restart() / 1000.0
+        if elapsed > SLEPT_AFTER:
+            sim.welcome_back(elapsed)
+        dt = min(elapsed, 0.1)
         live = [v for v in views if not v.frozen]
         if not live:
             return
+        sim.idle_external = idle_seconds()
         hidden = [sim.user_paused or sim.hidden_on(v.view) for v in live]
         if not all(hidden):
-            if backend.POLL_CURSOR and sim.cursor_force > 0:
+            if backend.POLL_CURSOR:
                 pos = QCursor.pos()
                 sim.set_cursor(pos.x(), pos.y())
             sim.step(dt)
+            calm[0] = 0.0 if sim.lively() else calm[0] + dt
         full, tiles = sim.take_damage()
         rows = None if full else tile_rows(tiles)
         for v, h in zip(live, hidden):
